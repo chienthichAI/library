@@ -38,12 +38,3 @@ Thumbs.db
 
 # Project specific
 backend/cache/
-
-# Large Model Files
-backend/models/anti_spoofing/minifasnet.onnx
-backend/models/face_recognition/arcface_r100.onnx
-backend/models/book_detection/yolov8m_books.pt
-backend/models/book_detection/yolov8n.pt
-backend/models/
-**/models/*.onnx
-**/models/*.pt
