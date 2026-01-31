@@ -1,0 +1,421 @@
+.face-capture {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    max-width: 600px;
+}
+
+.capture-header {
+    text-align: center;
+    margin-bottom: 24px;
+}
+
+.capture-header h3 {
+    font-size: 1.5rem;
+    margin-bottom: 8px;
+}
+
+.capture-header p {
+    color: var(--text-secondary);
+}
+
+/* Camera container */
+.camera-container {
+    position: relative;
+    width: 100%;
+    max-width: 500px;
+    aspect-ratio: 4/3;
+    background: var(--bg-card);
+    border-radius: var(--border-radius-lg);
+    overflow: hidden;
+    margin-bottom: 24px;
+}
+
+.camera-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    /* Mirror effect */
+}
+
+/* Face guide overlay */
+.face-guide-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.face-oval {
+    width: 240px;
+    height: 320px;
+    border: 3px solid rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    transition: all var(--transition-base);
+    box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.4);
+    position: relative;
+}
+
+.face-guide-overlay.valid .face-oval {
+    border-color: var(--success-color);
+    box-shadow: 0 0 0 1000px rgba(0, 0, 0, 0.5), 0 0 40px rgba(34, 197, 94, 0.6);
+    animation: facial-pulse 2s infinite ease-in-out;
+}
+
+.face-guide-overlay.invalid .face-oval {
+    border-color: var(--danger-color);
+    box-shadow: 0 0 0 1000px rgba(239, 68, 68, 0.1), 0 0 40px rgba(239, 68, 68, 0.3);
+}
+
+/* Scan-line animation */
+.scan-line {
+    position: absolute;
+    width: 100%;
+    height: 4px;
+    background: linear-gradient(to right, transparent, var(--primary-light), transparent);
+    box-shadow: 0 0 15px var(--primary-color);
+    top: 0;
+    left: 0;
+    opacity: 0;
+    border-radius: 50%;
+    z-index: 10;
+}
+
+.face-guide-overlay.valid .scan-line {
+    opacity: 1;
+    animation: scan 3s linear infinite;
+}
+
+@keyframes scan {
+    0% {
+        top: 10%;
+    }
+
+    50% {
+        top: 90%;
+    }
+
+    100% {
+        top: 10%;
+    }
+}
+
+@keyframes facial-pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.02);
+    }
+}
+
+/* Corner guides */
+.guide-corners {
+    position: absolute;
+    inset: 40px;
+}
+
+.corner {
+    position: absolute;
+    width: 30px;
+    height: 30px;
+    border-color: var(--primary-color);
+    border-style: solid;
+    border-width: 0;
+}
+
+.corner.tl {
+    top: 0;
+    left: 0;
+    border-top-width: 3px;
+    border-left-width: 3px;
+}
+
+.corner.tr {
+    top: 0;
+    right: 0;
+    border-top-width: 3px;
+    border-right-width: 3px;
+}
+
+.corner.bl {
+    bottom: 0;
+    left: 0;
+    border-bottom-width: 3px;
+    border-left-width: 3px;
+}
+
+.corner.br {
+    bottom: 0;
+    right: 0;
+    border-bottom-width: 3px;
+    border-right-width: 3px;
+}
+
+/* Countdown overlay */
+.countdown-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+}
+
+.countdown-number {
+    font-size: 120px;
+    font-weight: 700;
+    color: white;
+    animation: pulse 1s ease-in-out infinite;
+}
+
+/* Quality indicator */
+.quality-indicator {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    padding: 8px 16px;
+    border-radius: var(--border-radius-full);
+    font-size: 0.875rem;
+    font-weight: 600;
+}
+
+.quality-bar {
+    width: 80px;
+    height: 6px;
+    background: var(--bg-card);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.quality-fill {
+    height: 100%;
+    background: var(--danger-color);
+    transition: all var(--transition-base);
+}
+
+.quality-indicator.valid .quality-fill {
+    background: var(--success-color);
+}
+
+/* Quality issues */
+.quality-issues {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.issue-tag {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--danger-color);
+    padding: 6px 12px;
+    border-radius: var(--border-radius-full);
+    font-size: 0.8rem;
+}
+
+/* Status message */
+.status-message {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 24px;
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-md);
+    margin-bottom: 24px;
+    font-weight: 500;
+}
+
+.status-message.valid {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--success-color);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.status-message.invalid {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--danger-color);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    animation: shake 0.5s ease-in-out;
+}
+
+.status-message.checking {
+    background: rgba(59, 130, 246, 0.15);
+    color: var(--primary-light);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+@keyframes shake {
+
+    0%,
+    100% {
+        transform: translateX(0);
+    }
+
+    25% {
+        transform: translateX(-5px);
+    }
+
+    75% {
+        transform: translateX(5px);
+    }
+}
+
+.status-icon {
+    font-size: 1.25rem;
+}
+
+/* Progress indicators */
+.capture-progress {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 32px;
+}
+
+.progress-dot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+
+.progress-dot>span,
+.progress-dot>img {
+    width: 60px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-card);
+    border: 2px solid var(--bg-card);
+    border-radius: 50%;
+    font-weight: 600;
+    color: var(--text-muted);
+    transition: all var(--transition-base);
+}
+
+.progress-dot>img {
+    object-fit: cover;
+}
+
+.progress-dot.current>span {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    box-shadow: 0 0 15px rgba(37, 99, 235, 0.4);
+}
+
+.progress-dot.captured>img {
+    border-color: var(--success-color);
+}
+
+.progress-dot label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.progress-dot.current label {
+    color: var(--text-primary);
+}
+
+/* Capture button */
+.capture-btn {
+    min-width: 200px;
+}
+
+.capture-btn.ready {
+    animation: glow 2s ease-in-out infinite;
+}
+
+/* Manual capture button (smaller, secondary) */
+.capture-btn-manual {
+    min-width: 160px;
+    opacity: 0.7;
+    transition: all var(--transition-base);
+}
+
+.capture-btn-manual:hover {
+    opacity: 1;
+}
+
+.capture-hint {
+    text-align: center;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+    margin-top: 16px;
+    max-width: 400px;
+}
+
+.capture-hint strong {
+    color: var(--success-color);
+}
+
+/* Auto-capture progress overlay */
+.auto-capture-progress {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.3);
+    gap: 16px;
+}
+
+.progress-ring {
+    width: 180px;
+    height: 200px;
+}
+
+.progress-ring svg {
+    width: 100%;
+    height: 100%;
+}
+
+.progress-ring-bg {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.2);
+    stroke-width: 4;
+}
+
+.progress-ring-fill {
+    fill: none;
+    stroke: var(--success-color);
+    stroke-width: 4;
+    stroke-linecap: round;
+    transition: stroke-dasharray 0.2s ease-out;
+}
+
+.auto-capture-text {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: white;
+    text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.7;
+        transform: scale(1.05);
+    }
+}

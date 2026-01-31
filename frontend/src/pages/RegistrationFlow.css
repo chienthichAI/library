@@ -1,0 +1,70 @@
+.registration-flow {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+}
+
+.reg-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+}
+
+.reg-header h2 {
+    font-size: 1.5rem;
+}
+
+.back-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 8px 16px;
+    border-radius: var(--border-radius-md);
+    transition: all var(--transition-fast);
+}
+
+.back-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.spacer {
+    width: 100px;
+}
+
+.reg-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.error-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--danger-color);
+    border-radius: var(--border-radius-md);
+    color: var(--danger-color);
+    margin-bottom: 24px;
+    width: 100%;
+}
+
+.error-banner button {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--danger-color);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 4px 8px;
+}

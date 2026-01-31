@@ -1,0 +1,15 @@
+{
+    "name": "smartlib-kiosk",
+    "version": "1.0.0",
+    "description": "SmartLib Kiosk System",
+    "main": "index.js",
+    "scripts": {
+        "start": "concurrently \"npm run backend\" \"npm run frontend\"",
+        "frontend": "cd frontend && npm run dev",
+        "backend": "cd backend && .\\.venv\\Scripts\\python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload",
+        "install:all": "npm install && cd frontend && npm install"
+    },
+    "devDependencies": {
+        "concurrently": "^9.1.0"
+    }
+}

@@ -1,0 +1,113 @@
+.registration-complete {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    max-width: 500px;
+}
+
+.success-icon {
+    width: 100px;
+    height: 100px;
+    background: var(--gradient-success);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.success-icon span {
+    font-size: 48px;
+    color: white;
+}
+
+.registration-complete h2 {
+    margin-bottom: 12px;
+    background: var(--gradient-success);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.success-message {
+    font-size: 1.125rem;
+    margin-bottom: 32px;
+}
+
+.success-message strong {
+    color: var(--text-primary);
+}
+
+/* Student card */
+.student-card {
+    width: 100%;
+    background: var(--bg-secondary);
+    border-radius: var(--border-radius-lg);
+    overflow: hidden;
+    margin-bottom: 32px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    background: var(--gradient-primary);
+    font-weight: 600;
+}
+
+.card-icon {
+    font-size: 24px;
+}
+
+.card-body {
+    padding: 20px;
+}
+
+.card-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.card-row:last-child {
+    border-bottom: none;
+}
+
+.card-row .label {
+    color: var(--text-muted);
+}
+
+.card-row .value {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* Next steps */
+.next-steps {
+    text-align: left;
+    width: 100%;
+    background: var(--bg-card);
+    padding: 20px 24px;
+    border-radius: var(--border-radius-md);
+    margin-bottom: 32px;
+}
+
+.next-steps h4 {
+    margin-bottom: 16px;
+    color: var(--text-secondary);
+}
+
+.next-steps ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.next-steps li {
+    color: var(--text-secondary);
+}
