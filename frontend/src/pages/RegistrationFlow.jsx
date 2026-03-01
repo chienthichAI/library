@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import FaceCapture from '../components/FaceCapture'
 import StudentInfoForm from '../components/StudentInfoForm'
 import RegistrationComplete from '../components/RegistrationComplete'
+import { API_URL } from '../config'
 import './RegistrationFlow.css'
 
 const STEPS = [
@@ -32,7 +33,7 @@ export default function RegistrationFlow() {
 
         try {
             // Step 1: Create student account
-            const studentResponse = await fetch('http://localhost:8000/api/v1/students/', {
+            const studentResponse = await fetch(`${API_URL}/students/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -50,22 +51,37 @@ export default function RegistrationFlow() {
 
             const student = await studentResponse.json()
 
-            // Step 2: Register face embeddings (using the best captured image)
-            const formData = new FormData()
-            formData.append('student_id', info.studentId)
-            formData.append('image', faceImages[0].blob)
+            // Step 2: Register face embeddings (using all captured images for robust recognition)
+            let registeredCount = 0;
+            let lastError = null;
 
-            const faceResponse = await fetch('http://localhost:8000/api/v1/auth/register-face', {
-                method: 'POST',
-                body: formData
-            })
+            for (let i = 0; i < faceImages.length; i++) {
+                const formData = new FormData()
+                formData.append('student_id', info.studentId)
+                formData.append('image', faceImages[i].blob)
 
-            if (!faceResponse.ok) {
-                const err = await faceResponse.json()
-                throw new Error(err.detail || 'Không thể đăng ký khuôn mặt')
+                try {
+                    const faceResponse = await fetch(`${API_URL}/auth/register-face`, {
+                        method: 'POST',
+                        body: formData
+                    })
+
+                    if (!faceResponse.ok) {
+                        const err = await faceResponse.json()
+                        lastError = err.detail || 'Không thể đăng ký một góc khuôn mặt'
+                        console.warn(`Face registration failed for image ${i + 1}:`, lastError)
+                    } else {
+                        registeredCount++;
+                    }
+                } catch (e) {
+                    lastError = e.message;
+                    console.warn(`Face registration fetch failed for image ${i + 1}:`, e)
+                }
             }
 
-            const faceResult = await faceResponse.json()
+            if (registeredCount === 0) {
+                throw new Error(`Đăng ký khuôn mặt thất bại: ${lastError}`)
+            }
 
             setRegistrationResult({
                 success: true,

@@ -15,7 +15,8 @@ import sys
 
 from app.config import settings
 from app.database import init_db, close_db
-from app.api.routes import auth, books, transactions, students
+from app.api.routes import auth, books, transactions, students, assistant
+from app.core.ml_container import init_ai_models, AIModels
 
 
 # Configure logging
@@ -35,41 +36,43 @@ logger.add(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan events."""
-    # Startup
+    """
+    Lifespan events for FastAPI.
+    Initializes database and AI models on startup.
+    """
+    import os
+    os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
     logger.info("Starting SmartLib Kiosk API...")
     logger.info(f"Environment: {settings.app_env}")
     logger.info(f"Debug mode: {settings.debug}")
     
-    # Production security warnings
-    if settings.app_env == "production":
-        if settings.secret_key == "change-this-in-production":
-            logger.warning("⚠️ SECRET_KEY is using default value! Set a strong random key in production.")
-        if settings.cors_allowed_origins == "*":
-            logger.warning("⚠️ CORS is open to all origins! Set specific origins in production.")
-        if settings.debug:
-            logger.warning("⚠️ Debug mode is ON in production! Set DEBUG=false.")
+    from app.database import async_session_maker
     
-    # Validate model files exist
-    import os
-    model_checks = {
-        "Face Recognition (ArcFace)": settings.face_model_path,
-        "Anti-Spoofing (MiniFASNet)": settings.antispoofing_model_path,
-        "Book Detection (YOLOv8)": settings.yolo_model_path,
-    }
-    
-    for model_name, model_path in model_checks.items():
-        if os.path.exists(model_path):
-            logger.info(f"✓ {model_name} model: {model_path}")
-        else:
-            logger.warning(f"⚠️ {model_name} model not found: {model_path} - Using fallback/mock mode")
-    
-    # Initialize database
+    # 1. Initialize database connection
     try:
+        logger.info("Initializing database...")
         await init_db()
         logger.info("Database connection established")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
+        # Depending on severity, you might want to raise the exception or exit here
+    
+    # 2. Warm up AI models
+    try:
+        logger.info("Initializing AI models...")
+        await init_ai_models()
+        ocr_status = "GPU" if getattr(AIModels.ocr_service, '_ocr', None) else "MOCK"
+        logger.info(f"✓ AI Models loaded (Face: GPU, YOLO: GPU, OCR: {ocr_status})")
+    except Exception as e:
+        logger.error(f"Failed to pre-load AI models: {e}")
+        
+    # 3. Synchronize FAISS Vector Engine
+    try:
+        logger.info("Synchronizing FAISS vector engine from pgvector...")
+        async with async_session_maker() as session:
+            await AIModels.faiss_engine.sync_from_db(session)
+    except Exception as e:
+        logger.error(f"FAISS sync failed: {e}")
     
     yield
     
@@ -89,6 +92,7 @@ app = FastAPI(
 - 🔐 **Face Recognition**: Student authentication using ArcFace (512-dim embeddings)
 - 📚 **Book Detection**: Real-time book identification using YOLOv8
 - 📝 **OCR**: Text extraction from book covers using PaddleOCR
+- 🤖 **AI Assistant**: Intelligent chat assistant (Qwen 2.5) for book recommendations
 - 💳 **Transactions**: Automated book borrowing and returning
 - 📊 **Fine Management**: Automatic overdue fine calculation
 
@@ -97,11 +101,7 @@ app = FastAPI(
 - `/api/v1/books/*` - Book detection and catalog
 - `/api/v1/transactions/*` - Borrow/return operations
 - `/api/v1/students/*` - Student management
-
-### Technology Stack:
-- **Backend**: FastAPI + SQLAlchemy (async)
-- **Database**: Supabase PostgreSQL
-- **AI/ML**: InsightFace (ArcFace), Ultralytics (YOLOv8), PaddleOCR
+- `/api/v1/ai/*` - Chat and smart assistant
     """,
     version="1.0.0",
     docs_url="/docs",
@@ -132,6 +132,7 @@ app.include_router(auth.router, prefix=API_PREFIX)
 app.include_router(books.router, prefix=API_PREFIX)
 app.include_router(transactions.router, prefix=API_PREFIX)
 app.include_router(students.router, prefix=API_PREFIX)
+app.include_router(assistant.router, prefix=API_PREFIX)
 
 
 @app.get("/", tags=["Root"])

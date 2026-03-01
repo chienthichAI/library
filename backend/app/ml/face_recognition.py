@@ -14,7 +14,7 @@ Performance:
 """
 import numpy as np
 import cv2
-from typing import Optional, Tuple, List, Union
+from typing import Optional, Tuple, List, Union, Any
 from dataclasses import dataclass
 from pathlib import Path
 import struct
@@ -43,14 +43,24 @@ class FaceEmbeddingResult:
     
     def to_bytes(self) -> bytes:
         """Convert embedding to bytes for database storage."""
-        return self.embedding.astype(np.float32).tobytes()
+        # Ensure L2 normalization before saving (Defensive)
+        norm = np.linalg.norm(self.embedding)
+        emb = self.embedding / (norm + 1e-6) if norm > 1e-6 else self.embedding
+        return emb.astype(np.float32).tobytes()
     
     @staticmethod
-    def from_bytes(data: bytes) -> 'FaceEmbeddingResult':
+    def from_bytes(data: bytes, expected_dim: int = 512) -> 'FaceEmbeddingResult':
         """Reconstruct embedding from bytes."""
-        embedding = np.frombuffer(data, dtype=np.float32)
+        embedding = np.frombuffer(data, dtype=np.float32).copy()
+        if len(embedding) != expected_dim:
+            logger.error(f"Embedding dim mismatch: got {len(embedding)}, expected {expected_dim}")
+            return FaceEmbeddingResult(
+                embedding=np.zeros(expected_dim, dtype=np.float32),
+                confidence=0.0,
+                is_valid=False
+            )
         return FaceEmbeddingResult(
-            embedding=embedding,
+            embedding=embedding.copy(),  # B08: Return copy to allow mutation
             confidence=1.0,
             is_valid=True
         )
@@ -78,7 +88,7 @@ class FaceRecognizer:
     def __init__(
         self,
         model_path: Optional[str] = None,
-        model_name: str = "buffalo_l",
+        face_analysis_instance: Optional[Any] = None,
         embedding_dim: int = 512,
         use_gpu: bool = True
     ):
@@ -86,20 +96,22 @@ class FaceRecognizer:
         Initialize face recognizer.
         
         Args:
-            model_path: Path to ONNX model file (optional)
-            model_name: InsightFace model name
+            model_path: Path to standalone ONNX model file (optional)
+            face_analysis_instance: Instance of InsightFace's FaceAnalysis (avoids double loading)
             embedding_dim: Output embedding dimension (512 for ArcFace)
             use_gpu: Whether to use GPU acceleration
         """
         self.model_path = model_path
-        self.model_name = model_name
+        self.face_analysis_instance = face_analysis_instance
         self.embedding_dim = embedding_dim
         self.use_gpu = use_gpu
-        self._model = None
+        
+        self._rec_model = None
         self._session = None
         self._initialized = False
         
         # CLAHE configuration (Contrast Limited Adaptive Histogram Equalization)
+        # Only used as fallback if we don't have InsightFace's built-in processing
         self.clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
 
         
@@ -114,18 +126,23 @@ class FaceRecognizer:
             return True
             
         try:
-            if self.model_path and Path(self.model_path).exists() and ONNX_AVAILABLE:
-                # Load custom ONNX model
+            if self.face_analysis_instance is not None and hasattr(self.face_analysis_instance, 'models'):
+                # Extract recognition model from existing FaceAnalysis instance
+                self._rec_model = self.face_analysis_instance.models.get('recognition')
+                if self._rec_model is None:
+                    # Search through models to find the recognizer
+                    for model in self.face_analysis_instance.models.values():
+                        if hasattr(model, 'get_feat'):
+                            self._rec_model = model
+                            break
+                if self._rec_model is not None:
+                    logger.info("FaceRecognizer hitched to existing FaceAnalysis instance")
+            
+            elif self.model_path and Path(self.model_path).exists() and ONNX_AVAILABLE:
+                # Load custom standalone ONNX model
                 providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.use_gpu else ['CPUExecutionProvider']
                 self._session = ort.InferenceSession(self.model_path, providers=providers)
-                logger.info(f"Loaded ArcFace model from: {self.model_path}")
-                
-            elif INSIGHTFACE_AVAILABLE:
-                # Use InsightFace library
-                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.use_gpu else ['CPUExecutionProvider']
-                self._model = FaceAnalysis(name=self.model_name, providers=providers)
-                self._model.prepare(ctx_id=0 if self.use_gpu else -1, det_size=(640, 640))
-                logger.info(f"Initialized InsightFace model: {self.model_name}")
+                logger.info(f"Loaded standalone ArcFace model from: {self.model_path}")
                 
             else:
                 logger.warning("No face recognition model available. Using mock mode.")
@@ -169,22 +186,21 @@ class FaceRecognizer:
             if aligned_face.shape[:2] != (112, 112):
                 aligned_face = cv2.resize(aligned_face, (112, 112))
             
-            # Apply CLAHE preprocessing to enhance features in poor lighting
-            aligned_face = self._apply_clahe(aligned_face)
-
-                
-            if self._session is not None:
-                # Use ONNX Runtime
-                embedding = self._run_onnx_inference(aligned_face)
-            elif self._model is not None:
-                # Use InsightFace
+            # Only use CLAHE for standalone ONNX models. 
+            # InsightFace models have built-in optimal preprocessing.
+            if self._rec_model is not None:
                 embedding = self._run_insightface_inference(aligned_face)
+            elif self._session is not None:
+                aligned_face = self._apply_clahe(aligned_face)
+                embedding = self._run_onnx_inference(aligned_face)
             else:
-                # Mock embedding for testing
+                aligned_face = self._apply_clahe(aligned_face)
                 embedding = self._mock_embedding(aligned_face)
                 
-            # L2 normalize
-            embedding = embedding / np.linalg.norm(embedding)
+            # L2 normalize properly
+            norm = np.linalg.norm(embedding)
+            if abs(norm - 1.0) > 0.01:
+                embedding = embedding / (norm + 1e-6)
             
             return FaceEmbeddingResult(
                 embedding=embedding.astype(np.float32),
@@ -214,23 +230,13 @@ class FaceRecognizer:
         return output[0].flatten()
     
     def _run_insightface_inference(self, face: np.ndarray) -> np.ndarray:
-        """Run inference using InsightFace."""
-        # Get faces from the aligned image
-        faces = self._model.get(face)
-        
-        if faces and len(faces) > 0:
-            return faces[0].embedding
-        else:
-            # Fallback: use recognition model directly (for pre-aligned faces)
-            if hasattr(self._model, 'models') and 'recognition' in self._model.models:
-                rec_model = self._model.models['recognition']
-                # Ensure 112x112
-                face_input = cv2.resize(face, (112, 112))
-                # For ArcFaceONNX, get_feat is the direct way to get embedding from aligned img
-                embedding = rec_model.get_feat(face_input)
-                return embedding.flatten()
-                
-            return self._mock_embedding(face)
+        """Run straight to recognition model sub-node. Skips detection phase."""
+        if self._rec_model is not None:
+            # InsightFace recognizers typically expect RGB and native 112x112 layout
+            embedding = self._rec_model.get_feat(face)
+            return embedding.flatten()
+            
+        return self._mock_embedding(face)
     
     def _mock_embedding(self, face: np.ndarray) -> np.ndarray:
         """
@@ -279,11 +285,16 @@ class FaceRecognizer:
         Returns:
             Similarity score in range [-1, 1], where 1 = identical
         """
-        # Ensure L2 normalization
-        e1 = embedding1 / (np.linalg.norm(embedding1) + 1e-6)
-        e2 = embedding2 / (np.linalg.norm(embedding2) + 1e-6)
+        norm1 = np.linalg.norm(embedding1)
+        norm2 = np.linalg.norm(embedding2)
         
-        # Cosine similarity via dot product
+        # Guard against zero vectors which indicates failed extraction
+        if norm1 < 1e-6 or norm2 < 1e-6:
+            return 0.0
+            
+        e1 = embedding1 / norm1
+        e2 = embedding2 / norm2
+        
         similarity = np.dot(e1, e2)
         
         return float(similarity)
@@ -348,36 +359,3 @@ class FaceRecognizer:
             return image
 
     
-    def find_best_match(
-        self,
-        query_embedding: np.ndarray,
-        gallery_embeddings: List[Tuple[str, np.ndarray]],
-        threshold: float = 0.6
-    ) -> Optional[Tuple[str, float]]:
-        """
-        Find the best matching identity from a gallery.
-        
-        Args:
-            query_embedding: Query face embedding
-            gallery_embeddings: List of (student_id, embedding) tuples
-            threshold: Minimum similarity threshold
-            
-        Returns:
-            Tuple of (student_id, similarity) or None if no match above threshold
-        """
-        if not gallery_embeddings:
-            return None
-            
-        best_match = None
-        best_similarity = -1.0
-        
-        for student_id, gallery_emb in gallery_embeddings:
-            similarity = self.compare_embeddings(query_embedding, gallery_emb)
-            
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match = student_id
-                
-        if best_similarity >= threshold:
-            return best_match, best_similarity
-        return None

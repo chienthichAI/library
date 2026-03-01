@@ -28,6 +28,121 @@ try:
 except ImportError:
     ONNX_AVAILABLE = False
 
+try:
+    from scipy.signal import butter, filtfilt
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+
+def extract_rppg_signal(frames: list, face_bbox: tuple) -> float:
+    """
+    frames: list of BGR frames (e.g. 15-30 frames)
+    face_bbox: tuple of (x1, y1, x2, y2)
+    Returns: liveness score 0-1 based on rPPG heart rate signal extraction.
+    """
+    if not SCIPY_AVAILABLE or len(frames) < 10:
+        return 1.0  # Fail-open if not enough frames or missing scipy
+
+    green_channel_means = []
+    x1, y1, x2, y2 = face_bbox
+    
+    # Restrict to forehead/cheek to avoid eyes and mouth movement
+    forehead_y1 = y1 + int((y2 - y1) * 0.1)
+    forehead_y2 = y1 + int((y2 - y1) * 0.4)
+
+    gray_prev = None
+    for frame in frames:
+        roi = frame[forehead_y1:forehead_y2, x1:x2]
+        if roi.size == 0:
+            continue
+            
+        # Optional: check if frame is exactly same as previous
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if gray_prev is not None:
+            if np.mean(cv2.absdiff(gray, gray_prev)) < 0.5:
+                continue # Skip identical frame
+                
+        gray_prev = gray
+            
+        # Green channel is most sensitive to hemoglobin absorption
+        g_mean = np.mean(roi[:, :, 1])
+        green_channel_means.append(g_mean)
+        
+    if len(green_channel_means) < 10:
+        return 1.0
+        
+    signal = np.array(green_channel_means)
+    signal = signal - np.mean(signal)  # Detrend
+    
+    # Bandpass filter: heart rate frequencies 0.7-3.5 Hz (42-210 BPM)
+    # Assuming ~30fps
+    fps = 30
+    nyq = fps / 2.0
+    low, high = 0.7 / nyq, 3.5 / nyq
+    try:
+        b, a = butter(3, [low, high], btype='band')
+        
+        # Dynamically set padlen to avoid ValueError for short signals
+        pad_len = min(3 * max(len(a), len(b)), len(signal) - 1)
+        
+        filtered = filtfilt(b, a, signal, padlen=pad_len)
+        
+        # Measure energy in the heart rate band vs out of band
+        pulse_energy = np.var(filtered)
+        noise_energy = np.var(signal - filtered)
+        
+        snr = pulse_energy / (noise_energy + 1e-6)
+        liveness_score = min(snr / 2.0, 1.0)  # Normalize
+        
+        logger.info(f"rPPG Liveness check: SNR {snr:.4f} -> Score {liveness_score:.4f}")
+        return liveness_score
+    except Exception as e:
+        logger.warning(f"rPPG filtering error: {e}")
+        return 1.0
+
+def detect_screen_flicker(frames: list, face_bbox: tuple) -> float:
+    """
+    Detect screen refresh flicker via temporal FFT.
+    """
+    if len(frames) < 10:
+        return 1.0
+        
+    means = []
+    x1, y1, x2, y2 = face_bbox
+    gray_prev = None
+    for frame in frames:
+        roi = frame[y1:y2, x1:x2]
+        if roi.size > 0:
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            if gray_prev is not None:
+                if np.mean(cv2.absdiff(gray, gray_prev)) < 0.5:
+                    continue
+            gray_prev = gray
+            means.append(np.mean(roi))
+            
+    if len(means) < 10:
+        return 1.0
+        
+    signal = np.array(means)
+    signal = signal - np.mean(signal)
+    
+    fps = 30
+    fft_vals = np.abs(np.fft.rfft(signal))
+    
+    if len(fft_vals) <= 1:
+        return 1.0
+    
+    max_energy = np.max(fft_vals[1:])
+    # For a short 15-frame window (0.5s), frequencies are very coarse.
+    # We mainly look for high energy at the tail end (Nyquist = 15Hz).
+    # Screen recordings often have strong aliasing artifacts showing up as high-freq noise.
+    tail_energy = np.mean(fft_vals[len(fft_vals)//2:])
+    
+    screen_ratio = tail_energy / (max_energy + 1e-6)
+    score = 1.0 - min(screen_ratio * 4.0, 1.0)
+    logger.info(f"Screen Flicker check: Ratio {screen_ratio:.4f} -> Score {score:.4f}")
+    return score
+
 
 @dataclass  
 class AntiSpoofingResult:
@@ -38,8 +153,8 @@ class AntiSpoofingResult:
     
     @property
     def liveness_score(self) -> float:
-        """Score indicating how likely the face is real (0-1)."""
-        return self.confidence if self.is_real else 1.0 - self.confidence
+        """Xác suất là người thật, luôn trong [0, 1]."""
+        return self.confidence
 
 
 class AntiSpoofing:
@@ -97,6 +212,12 @@ class AntiSpoofing:
                 self._session = ort.InferenceSession(self.model_path, providers=providers)
                 logger.info(f"Loaded anti-spoofing model from: {self.model_path}")
             else:
+                import os
+                if os.getenv("ALLOW_HEURISTIC_SPOOF", "false").lower() != "true":
+                    raise FileNotFoundError(
+                        f"Anti-spoofing model không tìm thấy tại {self.model_path}. "
+                        "Không thể khởi động kiosk mà không có bảo vệ liveness. (Set ALLOW_HEURISTIC_SPOOF=true to override)"
+                    )
                 logger.warning("Anti-spoofing model not available. Using heuristic detection.")
                 
             self._initialized = True
@@ -134,12 +255,18 @@ class AntiSpoofing:
             logger.error(f"Anti-spoofing detection failed: {e}")
             return AntiSpoofingResult(is_real=False, confidence=0.0, spoof_type="error")
     
+    def _softmax(self, x: np.ndarray) -> np.ndarray:
+        e_x = np.exp(x - np.max(x))
+        return e_x / e_x.sum()
+
     def _run_model_inference(self, face_image: np.ndarray) -> AntiSpoofingResult:
         """Run MiniFASNet model inference."""
         # Preprocess
         face = cv2.resize(face_image, self.input_size)
+        
+        # MiniFASNet model expects BGR image (as read by cv2), unscaled [0, 255]
         face = face.astype(np.float32)
-        face = (face - 127.5) / 127.5  # Normalize to [-1, 1]
+        
         face = face.transpose(2, 0, 1)  # HWC -> CHW
         face = np.expand_dims(face, axis=0)  # Add batch
         
@@ -147,24 +274,47 @@ class AntiSpoofing:
         input_name = self._session.get_inputs()[0].name
         outputs = self._session.run(None, {input_name: face})
         
-        # Parse output (assuming softmax output [fake_prob, real_prob])
-        probs = outputs[0].flatten()
-        
-        if len(probs) >= 2:
+        probs = self._softmax(outputs[0].flatten())
+            
+        # MiniFASNet standard has 3 classes: [Fake(Print), Real(1), Fake(Replay/3D)]
+        if len(probs) == 3:
+            real_prob = probs[1]
+            fake_print_prob = probs[0]
+            fake_replay_prob = probs[2]
+            
+            fake_total = fake_print_prob + fake_replay_prob
+            is_real = real_prob >= self.threshold
+            
+            spoof_type = None if is_real else ("print" if fake_print_prob > fake_replay_prob else "replay")
+            
+            logger.info(f"LIVENESS CHECK - Fake(Print): {fake_print_prob:.4f} | Real: {real_prob:.4f} | Fake(Replay): {fake_replay_prob:.4f} | Threshold: {self.threshold} | is_real: {is_real}")
+            
+            return AntiSpoofingResult(
+                is_real=bool(is_real),
+                confidence=float(real_prob),  # B03: Ensure high prob = real
+                spoof_type=spoof_type
+            )
+        elif len(probs) >= 2:
             real_prob = probs[1]
             fake_prob = probs[0]
+            
+            is_real = real_prob >= self.threshold
+            spoof_type = None if is_real else "fake"
+            logger.info(f"LIVENESS CHECK - Type: 2-class | Fake: {fake_prob:.4f} | Real: {real_prob:.4f} | Threshold: {self.threshold} | is_real: {is_real}")
+            return AntiSpoofingResult(
+                is_real=bool(is_real),
+                confidence=float(real_prob),
+                spoof_type=spoof_type
+            )
         else:
             real_prob = float(probs[0] > 0.5)
-            fake_prob = 1.0 - real_prob
-            
-        is_real = real_prob >= self.threshold
-        spoof_type = None if is_real else self._classify_spoof_type(probs)
-        
-        return AntiSpoofingResult(
-            is_real=is_real,
-            confidence=float(real_prob if is_real else fake_prob),
-            spoof_type=spoof_type
-        )
+            is_real = real_prob >= self.threshold
+            logger.info(f"LIVENESS CHECK - Type: 1-class | Real: {real_prob:.4f} | Threshold: {self.threshold} | is_real: {is_real}")
+            return AntiSpoofingResult(
+                is_real=bool(is_real),
+                confidence=float(real_prob),
+                spoof_type=None if is_real else "fake"
+            )
     
     def _heuristic_detection(self, face_image: np.ndarray) -> AntiSpoofingResult:
         """
@@ -186,41 +336,48 @@ class AntiSpoofing:
         
         scores = []
         
+        # Calculate overall heuristic
         # 1. Blur detection using Laplacian variance
-        # Real faces typically have more texture detail
         laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-        blur_score = min(laplacian_var / 500.0, 1.0)  # Normalize
+        blur_score = min(laplacian_var / 500.0, 1.0)
         scores.append(blur_score)
         
         # 2. Frequency analysis for moiré patterns
         # Screen replay attacks often show moiré patterns
         f_transform = np.fft.fft2(gray)
         f_shift = np.fft.fftshift(f_transform)
-        magnitude = np.log(np.abs(f_shift) + 1)
         
-        # Check for periodic patterns in high frequencies
-        center = magnitude.shape[0] // 2
-        high_freq = magnitude[center-40:center+40, center-40:center+40]
-        freq_variance = np.var(high_freq)
-        freq_score = 1.0 - min(freq_variance / 5.0, 1.0)
+        rows, cols = gray.shape
+        crow, ccol = rows // 2, cols // 2
+        
+        # Mask: only keep high frequency region
+        mask = np.ones((rows, cols), np.uint8)
+        mask[max(0, crow-20):crow+20, max(0, ccol-20):ccol+20] = 0
+        
+        high_freq_energy = np.sum(np.abs(f_shift) * mask)
+        low_freq_energy = np.sum(np.abs(f_shift) * (1 - mask))
+        
+        # Fake (screen) has higher high_freq ratio
+        moire_ratio = high_freq_energy / (low_freq_energy + 1e-6)
+        freq_score = max(0.0, 1.0 - moire_ratio * 0.1)
         scores.append(freq_score)
         
-        # 3. Color distribution analysis (for color images)
+        # 3. Enhance single-frame evaluation with Color distribution
         if len(face_image.shape) == 3:
-            # Real faces have smooth color gradients
             color_var = np.var(face_image, axis=(0, 1)).mean()
             color_score = min(color_var / 2000.0, 1.0)
             scores.append(color_score)
             
-        # 4. Edge density analysis
-        edges = cv2.Canny(gray, 50, 150)
-        edge_density = np.sum(edges > 0) / edges.size
-        edge_score = 1.0 - min(abs(edge_density - 0.1) * 5, 1.0)
-        scores.append(edge_score)
-        
+            # Additional logic: Check for flat green channel standard deviation
+            # (often an indicator of generic digital displays)
+            g_std = np.std(face_image[:, :, 1])
+            if g_std < 10.0:
+                scores.append(0.1) # Penalize heavily if very flat
+                
         # Combine scores
-        final_score = np.mean(scores)
-        is_real = final_score >= self.threshold
+        final_score = float(np.mean(scores))
+
+        is_real = bool(final_score >= self.threshold)
         
         # Determine likely spoof type
         spoof_type = None
@@ -238,15 +395,7 @@ class AntiSpoofing:
             spoof_type=spoof_type
         )
     
-    def _classify_spoof_type(self, probs: np.ndarray) -> str:
-        """Classify the type of spoof attack if model supports it."""
-        # If model outputs multiple classes
-        if len(probs) > 2:
-            class_names = ["real", "print", "replay", "mask"]
-            max_idx = np.argmax(probs)
-            if max_idx < len(class_names):
-                return class_names[max_idx]
-        return "unknown"
+
     
     def detect_with_depth(
         self,
@@ -285,17 +434,15 @@ class AntiSpoofing:
             # Check for realistic depth distribution
             is_depth_valid = depth_variance > 10 and depth_range > 20
             
-            # Combine RGB and depth scores
-            if is_depth_valid:
-                combined_confidence = (rgb_result.confidence + 0.3) / 1.3
-            else:
-                combined_confidence = rgb_result.confidence * 0.7
+            # Combine RGB and depth scores as independent gates
+            if not is_depth_valid:
+                return AntiSpoofingResult(
+                    is_real=False,
+                    confidence=rgb_result.confidence * 0.5,
+                    spoof_type="3d_mask_or_flat"
+                )
                 
-            return AntiSpoofingResult(
-                is_real=rgb_result.is_real and is_depth_valid,
-                confidence=combined_confidence,
-                spoof_type=rgb_result.spoof_type if not is_depth_valid else None
-            )
+            return rgb_result
             
         except Exception as e:
             logger.error(f"Depth analysis failed: {e}")

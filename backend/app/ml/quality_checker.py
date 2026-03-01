@@ -28,6 +28,7 @@ class QualityIssue(Enum):
     NO_FACE = "no_face"
     LOW_CONTRAST = "low_contrast"
     PARTIAL_FACE = "partial_face"
+    BAD_POSE = "bad_pose"
 
 
 @dataclass
@@ -57,7 +58,8 @@ class QualityCheckResult:
             QualityIssue.MULTIPLE_FACES: "Phát hiện nhiều khuôn mặt. Chỉ một người.",
             QualityIssue.NO_FACE: "Không phát hiện khuôn mặt.",
             QualityIssue.LOW_CONTRAST: "Thiếu độ tương phản. Điều chỉnh ánh sáng.",
-            QualityIssue.PARTIAL_FACE: "Khuôn mặt bị che khuất hoặc không đầy đủ."
+            QualityIssue.PARTIAL_FACE: "Khuôn mặt bị che khuất hoặc không đầy đủ.",
+            QualityIssue.BAD_POSE: "Làm ơn xoay mặt dọc theo hướng dẫn và nhìn thẳng."
         }
         
         return " | ".join([messages.get(issue, str(issue)) for issue in self.issues[:2]])
@@ -72,11 +74,11 @@ class ImageQualityChecker:
     
     def __init__(
         self,
-        min_brightness: float = 40.0,
-        max_brightness: float = 220.0,
-        min_sharpness: float = 50.0,
-        min_face_ratio: float = 0.15,  # Face should be at least 15% of image
-        max_face_ratio: float = 0.70,  # Face should be at most 70% of image
+        min_brightness: float = 30.0,   # Lowered to tolerate darker rooms
+        max_brightness: float = 240.0,  # Increased to tolerate screen glare
+        min_sharpness: float = 20.0,    # Lowered due to webcam compressed video
+        min_face_ratio: float = 0.15,   # Face should be at least 15% of image
+        max_face_ratio: float = 0.70,   # Face should be at most 70% of image
         center_tolerance: float = 0.40  # Increased tolerance (40%) to allow tilted faces
     ):
         self.min_brightness = min_brightness
@@ -90,7 +92,8 @@ class ImageQualityChecker:
         self,
         image: np.ndarray,
         face_bbox: Optional[Tuple[int, int, int, int]] = None,
-        num_faces: int = 1
+        num_faces: int = 1,
+        landmarks: Optional[np.ndarray] = None
     ) -> QualityCheckResult:
         """
         Check image quality.
@@ -99,6 +102,7 @@ class ImageQualityChecker:
             image: BGR image
             face_bbox: (x1, y1, x2, y2) of detected face
             num_faces: Number of faces detected
+            landmarks: Optional 5 facial landmarks for pose estimation
             
         Returns:
             QualityCheckResult
@@ -107,7 +111,7 @@ class ImageQualityChecker:
         recommendations = []
         
         # Check brightness
-        brightness_score = self._check_brightness(image)
+        brightness_score = self._check_brightness(image, face_bbox)
         if brightness_score < 0.3:
             issues.append(QualityIssue.TOO_DARK)
             recommendations.append("Increase lighting")
@@ -118,7 +122,7 @@ class ImageQualityChecker:
             recommendations.append("Reduce direct light")
             
         # Check sharpness
-        sharpness_score = self._check_sharpness(image)
+        sharpness_score = self._check_sharpness(image, face_bbox)
         if sharpness_score < 0.3:
             issues.append(QualityIssue.BLURRY)
             recommendations.append("Hold camera steady")
@@ -133,8 +137,8 @@ class ImageQualityChecker:
         # No error is raised, just an informational note in logs
             
         # Check face size and position
-        face_size_score = 1.0
-        centering_score = 1.0
+        face_size_score = 0.0
+        centering_score = 0.0
         
         if face_bbox is not None:
             face_size_score = self._check_face_size(image, face_bbox)
@@ -157,16 +161,22 @@ class ImageQualityChecker:
         if contrast_score < 0.3:
             issues.append(QualityIssue.LOW_CONTRAST)
             
-        # Calculate overall score
+        # Check pose if landmarks are available
+        pose_score = self._check_pose(landmarks)
+        if pose_score < 0.5:
+            issues.append(QualityIssue.BAD_POSE)
+            recommendations.append("Look straight at the camera or along instructions")
+        
+        # Calculate overall score (Updated weights)
         overall_score = (
-            brightness_score * 0.25 +
-            sharpness_score * 0.25 +
-            face_size_score * 0.25 +
-            centering_score * 0.25
+            brightness_score * 0.20 +
+            sharpness_score * 0.30 +
+            face_size_score * 0.20 +
+            centering_score * 0.20 +
+            pose_score * 0.10
         )
         
         # Determine if valid (no critical issues)
-        # Note: MULTIPLE_FACES removed - system now auto-selects best face
         critical_issues = {
             QualityIssue.NO_FACE,
             QualityIssue.BLURRY,
@@ -186,9 +196,18 @@ class ImageQualityChecker:
             recommendations=recommendations
         )
     
-    def _check_brightness(self, image: np.ndarray) -> float:
-        """Check image brightness. Returns 0-1 score."""
+    def _check_brightness(self, image: np.ndarray, face_bbox: Optional[Tuple[int, int, int, int]] = None) -> float:
+        """Check image brightness on the face region if available. Returns 0-1 score."""
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
+        if face_bbox is not None:
+            x1, y1, x2, y2 = face_bbox
+            # Crop to face only
+            x1, y1 = max(0, int(x1)), max(0, int(y1))
+            x2, y2 = min(gray.shape[1], int(x2)), min(gray.shape[0], int(y2))
+            if y2 > y1 and x2 > x1:
+                gray = gray[y1:y2, x1:x2]
+
         mean_brightness = np.mean(gray)
         
         # Normalize to 0-1 based on ideal range (60-180)
@@ -203,14 +222,31 @@ class ImageQualityChecker:
             max_distance = (self.max_brightness - self.min_brightness) / 2
             return 1 - (distance / max_distance) * 0.3
     
-    def _check_sharpness(self, image: np.ndarray) -> float:
-        """Check image sharpness using Laplacian variance. Returns 0-1 score."""
+    def _check_sharpness(self, image: np.ndarray, face_bbox: Optional[Tuple[int, int, int, int]] = None) -> float:
+        """Check image sharpness using Laplacian variance on face region. Returns 0-1 score."""
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+        
+        if face_bbox is not None:
+            x1, y1, x2, y2 = face_bbox
+            # Expand bbox 10% to include face edges
+            pad = int((x2 - x1) * 0.1)
+            x1, y1 = max(0, int(x1) - pad), max(0, int(y1) - pad)
+            x2, y2 = min(gray.shape[1], int(x2) + pad), min(gray.shape[0], int(y2) + pad)
+            if y2 > y1 and x2 > x1:
+                gray = gray[y1:y2, x1:x2]
+
         laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
         
-        # Normalize (typical values: 50-500 for sharp images)
-        score = min(laplacian_var / self.min_sharpness, 1.0)
-        return max(0, min(score, 1.0))
+        # Realistic scale: <20=blurry, 20-200=acceptable, >200=sharp
+        BLUR_THRESHOLD = self.min_sharpness
+        SHARP_THRESHOLD = 200.0
+        
+        if laplacian_var < BLUR_THRESHOLD:
+            return (laplacian_var / BLUR_THRESHOLD) * 0.4  # 0 to 0.4
+        elif laplacian_var > SHARP_THRESHOLD:
+            return 1.0
+        else:
+            return 0.4 + ((laplacian_var - BLUR_THRESHOLD) / (SHARP_THRESHOLD - BLUR_THRESHOLD)) * 0.6
     
     def _check_face_size(
         self,
@@ -253,6 +289,43 @@ class ImageQualityChecker:
             return 1.0
         else:
             return max(0, 1 - (distance - self.center_tolerance) / 0.3)
+            
+    def _check_pose(self, landmarks: np.ndarray) -> float:
+        """
+        Estimate face pose (yaw, pitch, roll) from 5 landmarks to check if user is looking appropriately.
+        Returns 0-1 score.
+        Left eye, right eye, nose, left mouth, right mouth
+        """
+        if landmarks is None or len(landmarks) < 5:
+            return 1.0 # Default pass if no landmarks
+        
+        # Calculate eye distance vs nose-to-eye ratio (Yaw estimation proxy)
+        left_eye = landmarks[0]
+        right_eye = landmarks[1]
+        nose = landmarks[2]
+        left_mouth = landmarks[3]
+        right_mouth = landmarks[4]
+        
+        # Yaw: symmetry of eyes vs nose
+        left_to_nose = np.linalg.norm(nose - left_eye)
+        right_to_nose = np.linalg.norm(nose - right_eye)
+        yaw_symmetry = min(left_to_nose, right_to_nose) / (max(left_to_nose, right_to_nose) + 1e-6)
+        
+        # Roll: tilt angle of the eye line
+        eye_vec = right_eye - left_eye
+        roll_angle = abs(np.degrees(np.arctan2(eye_vec[1], eye_vec[0])))
+        roll_score = max(0.0, 1.0 - roll_angle / 30.0)  # Penalty if tilt > 30 degrees
+        
+        # Pitch: eye-nose ratio vs nose-mouth ratio (proxy)
+        eye_mid = (left_eye + right_eye) / 2.0
+        mouth_mid = (left_mouth + right_mouth) / 2.0
+        eye_to_nose = np.linalg.norm(nose - eye_mid)
+        nose_to_mouth = np.linalg.norm(mouth_mid - nose)
+        pitch_ratio = min(eye_to_nose, nose_to_mouth) / (max(eye_to_nose, nose_to_mouth) + 1e-6)
+        pitch_score = min(pitch_ratio / 0.6, 1.0)  # Ideal ratio ~0.6–1.2
+
+        # Weighted: Yaw is most important since rotating sideways loses distinct embedding features
+        return float(yaw_symmetry * 0.5 + roll_score * 0.3 + pitch_score * 0.2)
     
     def _check_contrast(self, image: np.ndarray) -> float:
         """Check image contrast. Returns 0-1 score."""

@@ -137,13 +137,14 @@ class FaceDetector:
             logger.error(f"Failed to initialize face detector: {e}")
             return False
     
-    def detect(self, image: np.ndarray, max_faces: int = 1) -> List[DetectedFace]:
+    def detect(self, image: np.ndarray, max_faces: int = 1, extract_embedding: bool = True) -> List[DetectedFace]:
         """
         Detect faces in an image.
         
         Args:
             image: BGR image as numpy array (H, W, 3)
             max_faces: Maximum number of faces to return
+            extract_embedding: Whether to extract deep face features (ArcFace). False speeds up ~10x.
             
         Returns:
             List of DetectedFace objects
@@ -162,27 +163,52 @@ class FaceDetector:
             image_rgb = image
             
         if not INSIGHTFACE_AVAILABLE or self._model is None:
-            # Mock detection for testing
-            return self._mock_detect(image)
+            # Mock detection for testing (expects RGB)
+            return self._mock_detect(image_rgb)
             
         try:
-            # Run detection
-            faces = self._model.get(image_rgb)
+            # Run detection ONLY or full pipeline
+            if extract_embedding:
+                faces = self._model.get(image_rgb)
+            else:
+                det_model = self._model.models.get('detection')
+                if det_model is None:
+                    faces = self._model.get(image_rgb)
+                else:
+                    bboxes, kpss = det_model.detect(image_rgb)
+                    faces = []
+                    # bboxes shape is (N, 5), kpss is (N, 5, 2)
+                    if bboxes is not None and bboxes.shape[0] > 0:
+                        for i in range(bboxes.shape[0]):
+                            class MockInsightFace:
+                                bbox = bboxes[i, 0:4]
+                                det_score = bboxes[i, 4]
+                                kps = kpss[i] if kpss is not None else None
+                                embedding = None
+                                normed_embedding = None
+                            faces.append(MockInsightFace())
             
             if not faces:
                 return []
                 
-            # Sort by confidence and limit
-            faces = sorted(faces, key=lambda x: x.det_score, reverse=True)[:max_faces]
+            # Sort by confidence and get a generous margin so _select_best_face can pick based on size/center
+            faces = sorted(faces, key=lambda x: x.det_score, reverse=True)
+            if max_faces > 0:
+                faces = faces[:max_faces * 2]
             
             detected_faces = []
             for face in faces:
+                kps = getattr(face, 'kps', None)
+                
+                normed_emb = getattr(face, 'normed_embedding', None)
+                emb = getattr(face, 'embedding', None)
+                
                 detected = DetectedFace(
                     bbox=tuple(face.bbox.astype(int)),
                     confidence=float(face.det_score),
-                    landmarks=face.landmark if hasattr(face, 'landmark') else None,
-                    aligned_face=self._align_face(image_rgb, face) if hasattr(face, 'landmark') else None,
-                    embedding=face.normed_embedding if hasattr(face, 'normed_embedding') else (face.embedding if hasattr(face, 'embedding') else None)
+                    landmarks=kps,
+                    aligned_face=self._align_face(image_rgb, face) if kps is not None else None,
+                    embedding=normed_emb if normed_emb is not None else emb
                 )
                 detected_faces.append(detected)
                 
@@ -216,21 +242,21 @@ class FaceDetector:
             from insightface.utils import face_align
             
             # Use 5-point landmarks for alignment (ArcFace standard)
-            kps = None
-            if hasattr(face, 'kps'):
-                kps = face.kps
-            elif hasattr(face, 'landmark'):
-                kps = face.landmark
-                
+            kps = getattr(face, 'kps', None)
+            
             if kps is not None and image is not None:
                 # Ensure image is a valid numpy array with shape
                 if not hasattr(image, 'shape') or len(image.shape) < 2:
                     logger.warning("Invalid image object passed to _align_face")
                     return None
                     
-                # Ensure landmarks are in correct format (5, 2)
-                if len(kps) > 5:
-                    kps = kps[:5]
+                import numpy as np
+                if not isinstance(kps, np.ndarray):
+                    kps = np.array(kps)
+                    
+                if kps.shape != (5, 2):
+                    logger.warning(f"Unexpected landmark shape: {kps.shape}. Needs (5, 2).")
+                    return None
                 
                 aligned = face_align.norm_crop(image, kps, image_size=target_size[0])
                 return aligned
@@ -261,9 +287,10 @@ class FaceDetector:
             
             detected_faces = []
             for (x, y, w, h) in faces:
+                # Use a dummy confidence for test so they aren't all exactly 0.85
                 detected = DetectedFace(
                     bbox=(x, y, x + w, y + h),
-                    confidence=0.85,
+                    confidence=0.0,
                     landmarks=None,
                     aligned_face=cv2.resize(image[y:y+h, x:x+w], (112, 112))
                 )
@@ -319,7 +346,7 @@ class FaceDetector:
             )
             
             # Draw landmarks if available
-            if face.landmarks is not None:
+            if face.landmarks is not None and getattr(face.landmarks, "ndim", 0) == 2:
                 for point in face.landmarks:
                     cv2.circle(result, (int(point[0]), int(point[1])), 2, (0, 0, 255), -1)
                     

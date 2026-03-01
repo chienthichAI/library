@@ -103,13 +103,42 @@ async def create_student(
     Create a new student account.
     """
     try:
+        from sqlalchemy import func
+        from app.models.face_embedding import FaceEmbedding
+        
         # Check if student ID already exists
         stmt = select(Student).where(Student.student_id == student.student_id)
         result = await db.execute(stmt)
         existing = result.scalar_one_or_none()
         
         if existing:
-            raise HTTPException(status_code=400, detail="Mã sinh viên này đã tồn tại trong hệ thống")
+            # Check if this student has any face embeddings
+            stmt_faces = select(func.count()).where(FaceEmbedding.student_id == student.student_id)
+            faces_count = await db.execute(stmt_faces)
+            count = faces_count.scalar() or 0
+            
+            if count == 0:
+                # Student exists but has no face embeddings (previous registration failed).
+                # Overwrite their info and return it to resume the registration flow.
+                existing.full_name = student.full_name
+                # Only check email/phone conflicts if they are changed and conflict with ANOTHER student
+                if student.email and student.email != existing.email:
+                    stmt_email = select(Student).where(Student.email == student.email)
+                    if (await db.execute(stmt_email)).scalar_one_or_none():
+                        raise HTTPException(status_code=400, detail="Email này đã được sử dụng bởi sinh viên khác")
+                if student.phone and student.phone != existing.phone:
+                    stmt_phone = select(Student).where(Student.phone == student.phone)
+                    if (await db.execute(stmt_phone)).scalar_one_or_none():
+                        raise HTTPException(status_code=400, detail="Số điện thoại này đã được sử dụng")
+                        
+                existing.email = student.email
+                existing.phone = student.phone
+                
+                await db.commit()
+                await db.refresh(existing)
+                return StudentResponse.model_validate(existing)
+            else:
+                raise HTTPException(status_code=400, detail="Mã sinh viên này đã tồn tại và đã đăng ký khuôn mặt trong hệ thống")
             
         # Check if email exists
         if student.email:

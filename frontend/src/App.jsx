@@ -5,6 +5,8 @@ import RegistrationFlow from './pages/RegistrationFlow'
 import VerificationScreen from './pages/VerificationScreen'
 import BookReturnScreen from './pages/BookReturnScreen'
 import AdminDashboard from './pages/AdminDashboard'
+import BookDetail from './pages/BookDetail'
+import AIChatbot from './components/AIChatbot'
 import './App.css'
 
 function App() {
@@ -17,7 +19,9 @@ function App() {
           <Route path="/verify" element={<VerificationScreen />} />
           <Route path="/return" element={<BookReturnScreen />} />
           <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/books/:id" element={<BookDetail />} />
         </Routes>
+        <AIChatbot />
       </div>
     </BrowserRouter>
   )

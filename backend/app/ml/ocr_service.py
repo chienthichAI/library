@@ -8,32 +8,24 @@ Architecture:
 - Text Detection: DB (Differentiable Binarization)
 - Text Recognition: CRNN (Convolutional Recurrent Neural Network)
 """
-import os
-
-# AGGRESSIVE FIX for "ConvertPirAttribute2RuntimeAttribute" error on Windows
-# These must be set BEFORE importing paddle
-os.environ['FLAGS_use_mkldnn'] = '0'
-os.environ['FLAGS_enable_onednn'] = '0'
-os.environ['DNNL_MAX_CPU_ISA'] = 'AVX2' # Sometimes helps with instruction mismatch
-
 import numpy as np
 import cv2
 from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
 from loguru import logger
 
+PADDLEOCR_AVAILABLE = False
 try:
     import paddle
     from paddleocr import PaddleOCR
     PADDLEOCR_AVAILABLE = True
-    # Extra safety: disable mkldnn via paddle flags as well
     try:
         paddle.set_flags({'FLAGS_use_mkldnn': False})
     except:
         pass
-except ImportError:
+except (ImportError, OSError, Exception, BaseException) as e:
+    logger.warning(f"PaddleOCR failed to load (DLL conflict suspected): {e}")
     PADDLEOCR_AVAILABLE = False
-    logger.warning("PaddleOCR not available. Using mock OCR.")
 
 
 @dataclass
@@ -116,28 +108,32 @@ class OCRService:
             
         try:
             if PADDLEOCR_AVAILABLE:
-                # EXTREME FAST CPU Profile
-                try:
-                    import paddle
-                    try:
-                        # Some versions use paddle.set_num_threads, others don't have it at top level
-                        paddle.set_num_threads(1)
-                    except AttributeError:
-                        pass
-                        
-                    self._ocr = PaddleOCR(
-                        use_angle_cls=False, # DISABLING THIS GIVES 3X SPEED ON CPU
-                        lang=self.lang,
-                        use_gpu=False,
-                        enable_mkldnn=False,
-                        show_log=False,
-                        det_limit_side_len=320, # Even smaller for speed
-                    )
-                except Exception as e:
-                    logger.warning(f"PaddleOCR Extreme Fast Init failed: {e}")
-                    self._ocr = PaddleOCR(lang=self.lang, enable_mkldnn=False)
+                # Optimized for GPU if available, fallback to CPU
+                kwargs = {
+                    "lang": self.lang,
+                    "det_limit_side_len": 480, # Increased resolution for GPU
+                    "use_angle_cls": False
+                }
                 
-                logger.info("PaddleOCR initialized with EXTREME FAST PROFILE")
+                if self.use_gpu:
+                    import torch
+                    if torch.cuda.is_available():
+                        # PaddleOCR 3.x with Paddle 3.x handles device globally
+                        import paddle
+                        paddle.device.set_device('gpu:0')
+                        kwargs["use_gpu"] = True
+                        kwargs["enable_mkldnn"] = False
+                        logger.info("PaddleOCR initializing on GPU")
+                    else:
+                        kwargs["use_gpu"] = False
+                        kwargs["enable_mkldnn"] = True
+                        logger.info("PaddleOCR falling back to CPU (No CUDA)")
+                else:
+                    kwargs["use_gpu"] = False
+                    kwargs["enable_mkldnn"] = True
+                
+                self._ocr = PaddleOCR(**kwargs)
+                logger.info(f"PaddleOCR initialized (GPU={kwargs.get('use_gpu', False)})")
             else:
                 logger.warning("PaddleOCR not available. Using mock mode.")
                 

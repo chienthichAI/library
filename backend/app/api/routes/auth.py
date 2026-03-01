@@ -4,6 +4,7 @@ Face verification and registration endpoints with quality feedback
 """
 import numpy as np
 import cv2
+from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
@@ -28,42 +29,43 @@ def get_auth_service() -> AuthenticationService:
 
 @router.post("/verify-face", response_model=FaceVerifyResponse)
 async def verify_face(
-    image: UploadFile = File(..., description="Face image (JPEG/PNG)"),
+    image: Optional[UploadFile] = File(None, description="Single Face image (Legacy)"),
+    images: List[UploadFile] = File(None, description="Multiple face images for rPPG"),
     db: AsyncSession = Depends(get_db),
     auth_service: AuthenticationService = Depends(get_auth_service)
 ):
     """
     Verify student identity using face recognition.
-    
-    **Enhanced Pipeline:**
-    1. Check image quality (brightness, sharpness, face position)
-    2. Detect face using RetinaFace
-    3. Check liveness (anti-spoofing)
-    4. Extract 512-dim embedding using ArcFace
-    5. Match against ALL student embeddings (supports multiple per student)
-    
-    **Quality Feedback:**
-    - Returns quality_score (0-1) indicating image quality
-    - Returns quality_issues list if problems detected
-    - Vietnamese error messages for user guidance
-    
-    **Returns:**
-    - student_id and name if verified
-    - confidence score (0-1)
-    - liveness score
-    - quality feedback
     """
     try:
-        # Read and decode image
-        contents = await image.read()
+        if images and len(images) > 0:
+            target_file = images[-1]  # using the last frame as the main one for auth
+        elif image:
+            target_file = image
+            images = [image] # default to single frame list
+        else:
+            raise HTTPException(status_code=400, detail="No image provided")
+            
+        # Read the main image
+        contents = await target_file.read()
         nparr = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if img is None:
             raise HTTPException(status_code=400, detail="Invalid image format")
+            
+        # Decode all frames for rPPG
+        frames = []
+        for f in images:
+            await f.seek(0)
+            c = await f.read()
+            arr = np.frombuffer(c, np.uint8)
+            decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if decoded is not None:
+                frames.append(decoded)
         
         # Authenticate with quality check
-        result = await auth_service.authenticate(img, db, check_quality=True)
+        result = await auth_service.authenticate(img, db, check_quality=True, frames=frames)
         
         return FaceVerifyResponse(
             success=result.success,
@@ -165,9 +167,11 @@ async def check_image_quality(
         if img is None:
             raise HTTPException(status_code=400, detail="Invalid image format")
         
-        # Detect face first
-        faces = auth_service.face_detector.detect(img, max_faces=5)
+        # Detect face first (skip heavy embedding extraction for just quality check)
+        faces = auth_service.face_detector.detect(img, max_faces=5, extract_embedding=False)
         face_bbox = None
+        landmarks = None
+        face = None
         num_faces = len(faces)
         
         if faces:
@@ -175,20 +179,33 @@ async def check_image_quality(
             face = auth_service._select_best_face(img, faces)
             if face:
                 face_bbox = (face.x1, face.y1, face.x2, face.y2)
+                landmarks = getattr(face, 'landmarks', None)
         
         # Check quality
-        result = auth_service.quality_checker.check(img, face_bbox, num_faces)
+        result = auth_service.quality_checker.check(img, face_bbox, num_faces, landmarks=landmarks)
         
+        response_faces = []
+        if faces:
+            for f in faces:
+                is_primary = (f == face) if face else False
+                response_faces.append({
+                    "x1": int(f.x1), "y1": int(f.y1),
+                    "x2": int(f.x2), "y2": int(f.y2),
+                    "confidence": float(f.confidence),
+                    "is_primary": is_primary
+                })
+
         return {
-            "is_valid": result.is_valid,
-            "overall_score": result.overall_score,
-            "brightness_score": result.brightness_score,
-            "sharpness_score": result.sharpness_score,
-            "face_size_score": result.face_size_score,
-            "centering_score": result.centering_score,
+            "is_valid": bool(result.is_valid),
+            "overall_score": float(result.overall_score),
+            "brightness_score": float(result.brightness_score),
+            "sharpness_score": float(result.sharpness_score),
+            "face_size_score": float(result.face_size_score),
+            "centering_score": float(result.centering_score),
             "issues": [issue.value for issue in result.issues],
             "message": result.vietnamese_message,
-            "recommendations": result.recommendations
+            "recommendations": result.recommendations,
+            "faces": response_faces
         }
         
     except HTTPException:

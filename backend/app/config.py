@@ -37,13 +37,17 @@ class Settings(BaseSettings):
     
     # AI Models Paths
     face_model_path: str = "models/face_recognition/arcface_r100.onnx"
-    antispoofing_model_path: str = "models/anti_spoofing/minifasnet.onnx"
+    antispoofing_model_path: str = "models/minifasnet.onnx"
     yolo_model_path: str = "models/book_detection/yolov8m_books.pt"
     ocr_lang: str = "vi"
     
     # Face Recognition Thresholds
-    face_similarity_threshold: float = 0.6
-    liveness_threshold: float = 0.5
+    face_similarity_threshold: float = 0.45
+    liveness_threshold: float = 0.60
+    
+    # Continuous Learning
+    continuous_learning_threshold: float = 0.85
+    continuous_learning_enabled: bool = True
     
     # Book Detection
     book_detection_confidence: float = 0.5
