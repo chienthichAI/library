@@ -170,7 +170,9 @@ class AuthenticationService:
         check_quality: bool = True,
         frames: Optional[List[np.ndarray]] = None,
         track_id: Optional[str] = None,
-        pre_detected_face: Optional[DetectedFace] = None
+        pre_detected_face: Optional[DetectedFace] = None,
+        ground_truth_student_id: Optional[str] = None,
+        source: str = "api",
     ) -> AuthenticationResult:
         """
         Authenticate a student using face recognition.
@@ -187,6 +189,11 @@ class AuthenticationService:
         """
         import time
         start_time = time.time()
+        log_context = {
+            "source": source,
+            "track_id": track_id or "",
+            "ground_truth_student_id": ground_truth_student_id or "",
+        }
         
         if track_id is not None and track_id in self.track_cache:
             cache_entry = self.track_cache.get(track_id)
@@ -213,7 +220,7 @@ class AuthenticationService:
             
             if not faces:
                 error_msg = "Không phát hiện khuôn mặt. Đưa mặt vào khung hình."
-                await self._write_audit_log(db, "AUTH_FAIL", start_time, error_msg=error_msg, quality_score=0.0)
+                await self._write_audit_log(db, "AUTH_FAIL", start_time, error_msg=error_msg, quality_score=0.0, **log_context)
                 await db.commit()
                 return AuthenticationResult(
                     success=False, student_id=None, student_name=None, role=None,
@@ -226,7 +233,7 @@ class AuthenticationService:
             face = self._select_best_face(image, faces)
             if face is None:
                 error_msg = "Không xác định được khuôn mặt chính. Đưa mặt vào giữa khung hình."
-                await self._write_audit_log(db, "AUTH_FAIL", start_time, error_msg=error_msg, quality_score=0.0)
+                await self._write_audit_log(db, "AUTH_FAIL", start_time, error_msg=error_msg, quality_score=0.0, **log_context)
                 await db.commit()
                 return AuthenticationResult(
                     success=False, student_id=None, student_name=None, role=None,
@@ -247,7 +254,7 @@ class AuthenticationService:
                 
                 if not quality_result.is_valid:
                     error_msg = quality_result.vietnamese_message
-                    await self._write_audit_log(db, "AUTH_FAIL", start_time, error_msg=error_msg, quality_score=quality_score, quality_issues=quality_issues)
+                    await self._write_audit_log(db, "AUTH_FAIL", start_time, error_msg=error_msg, quality_score=quality_score, quality_issues=quality_issues, **log_context)
                     await db.commit()
                     return AuthenticationResult(
                         success=False, student_id=None, student_name=None, role=None,
@@ -312,7 +319,7 @@ class AuthenticationService:
             
             if not is_real:
                 error_msg = f"Phát hiện giả mạo: {spoof_t} (Score: {liveness_score:.2f})"
-                await self._write_audit_log(db, "SPOOF_DETECTED", start_time, error_msg=error_msg, liveness=liveness_score, quality_score=quality_score)
+                await self._write_audit_log(db, "SPOOF_DETECTED", start_time, error_msg=error_msg, liveness=liveness_score, quality_score=quality_score, **log_context)
                 await db.commit()
                 return AuthenticationResult(
                     success=False, student_id=None, student_name=None, role=None,
@@ -332,7 +339,7 @@ class AuthenticationService:
                 embedding_result = self.face_recognizer.extract_embedding(aligned_face)
                 if not embedding_result.is_valid:
                     error_msg = "Không thể trích xuất đặc trưng khuôn mặt"
-                    await self._write_audit_log(db, "AUTH_FAIL", start_time, error_msg=error_msg, liveness=liveness_score, quality_score=quality_score)
+                    await self._write_audit_log(db, "AUTH_FAIL", start_time, error_msg=error_msg, liveness=liveness_score, quality_score=quality_score, **log_context)
                     await db.commit()
                     return AuthenticationResult(
                         success=False, student_id=None, student_name=None, role=None,
@@ -369,7 +376,7 @@ class AuthenticationService:
             
             if match_result is None:
                 error_msg = "Không tìm thấy sinh viên. Vui lòng đăng ký trước."
-                await self._write_audit_log(db, "AUTH_MISMATCH", start_time, error_msg=error_msg, liveness=liveness_score, quality_score=quality_score)
+                await self._write_audit_log(db, "AUTH_MISMATCH", start_time, error_msg=error_msg, liveness=liveness_score, quality_score=quality_score, **log_context)
                 await db.commit()
                 return AuthenticationResult(
                     success=False, student_id=None, student_name=None, role=None,
@@ -404,7 +411,7 @@ class AuthenticationService:
                 liveness=liveness_score,
                 quality_score=quality_score,
                 predicted_student_name=full_name,
-                track_id=track_id,
+                **log_context,
             )
             await db.commit()
             
@@ -432,7 +439,7 @@ class AuthenticationService:
         except Exception as e:
             logger.error(f"Authentication failed: {e}", exc_info=True)
             error_msg = "Lỗi hệ thống. Vui lòng thử lại hoặc liên hệ quản trị viên."
-            await self._write_audit_log(db, "SYSTEM_ERROR", start_time, error_msg=str(e))
+            await self._write_audit_log(db, "SYSTEM_ERROR", start_time, error_msg=str(e), **log_context)
             await db.commit()
             return AuthenticationResult(
                 success=False, student_id=None, student_name=None, role=None,

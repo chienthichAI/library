@@ -30,6 +30,8 @@ def get_auth_service() -> AuthenticationService:
 async def verify_face(
     image: Optional[UploadFile] = File(None, description="Single Face image (Legacy)"),
     images: List[UploadFile] = File(None, description="Multiple face images for rPPG"),
+    ground_truth_student_id: Optional[str] = Form(None, description="Test mode label for evaluation"),
+    source: Optional[str] = Form("api", description="Source tag for logging"),
     db: AsyncSession = Depends(get_db),
     auth_service: AuthenticationService = Depends(get_auth_service)
 ):
@@ -68,7 +70,14 @@ async def verify_face(
         
         # Authenticate with quality check (P3-04: 15s timeout for ML inference)
         result = await asyncio.wait_for(
-            auth_service.authenticate(img, db, check_quality=True, frames=frames),
+            auth_service.authenticate(
+                img,
+                db,
+                check_quality=True,
+                frames=frames,
+                ground_truth_student_id=(ground_truth_student_id or "").strip() or None,
+                source=(source or "api").strip() or "api",
+            ),
             timeout=15.0
         )
         
@@ -241,6 +250,8 @@ async def websocket_stream_endpoint(
     Receives JPEG binary frames and returns JSON authentication/tracking updates.
     """
     await websocket.accept()
+    ground_truth_student_id = (websocket.query_params.get("ground_truth_student_id") or "").strip() or None
+    source = "ws_test" if ground_truth_student_id else "ws"
     logger.info("WebSocket client connected for real-time authentication")
     
     try:
@@ -279,7 +290,9 @@ async def websocket_stream_endpoint(
                 image=img, 
                 db=db, 
                 check_quality=True, 
-                track_id=track_id
+                track_id=track_id,
+                ground_truth_student_id=ground_truth_student_id,
+                source=source,
             )
             
             # Send result back
