@@ -5,6 +5,8 @@ Configured for Supabase PostgreSQL
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
+import asyncio
+from loguru import logger
 from app.config import settings
 
 
@@ -63,15 +65,16 @@ async def init_db():
     We only test basic connectivity here.
     """
     try:
-        # Test basic connectivity with a simple query
         from sqlalchemy import text
-        async with async_session_maker() as session:
-            await session.execute(text("SELECT 1"))
-            await session.commit()
-    except Exception as e:
-        # Log but don't fail - tables already exist in Supabase
-        import logging
-        logging.warning(f"Database init check: {e}")
+        async with engine.begin() as conn:
+            # Simple connectivity test
+            await conn.execute(text("SELECT 1"))
+    except (Exception, asyncio.CancelledError) as e:
+        if isinstance(e, asyncio.CancelledError):
+            logger.warning("Database initialization was cancelled.")
+        else:
+            logger.error(f"Database connection test failed: {e}")
+        raise e
 
 
 async def close_db():

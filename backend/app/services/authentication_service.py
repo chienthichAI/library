@@ -6,6 +6,7 @@ Uses ArcFace + AntiSpoofing for secure verification.
 Enhanced with image quality check and multiple embeddings support.
 """
 import numpy as np
+import cv2
 import hashlib
 from typing import Optional, Tuple, List
 from datetime import datetime
@@ -98,6 +99,10 @@ class AuthenticationService:
         )
         self.quality_checker = quality_checker or ImageQualityChecker()
         
+        # Tracking Cache: { track_id: {"result": AuthenticationResult, "timestamp": float} }
+        self.track_cache = {}
+        self.cache_ttl = 10.0  # Increased to 10s to prevent rapid re-auth triggers
+        
         # Ensure threshold is updated if component was passed in
         if self.anti_spoofing:
             self.anti_spoofing.threshold = self.liveness_threshold
@@ -139,7 +144,9 @@ class AuthenticationService:
         image: np.ndarray,
         db: AsyncSession,
         check_quality: bool = True,
-        frames: Optional[List[np.ndarray]] = None
+        frames: Optional[List[np.ndarray]] = None,
+        track_id: Optional[str] = None,
+        pre_detected_face: Optional[DetectedFace] = None
     ) -> AuthenticationResult:
         """
         Authenticate a student using face recognition.
@@ -149,18 +156,32 @@ class AuthenticationService:
             db: Database session
             check_quality: Whether to perform quality checks
             frames: Optional list of recent frames for temporal anti-spoofing (e.g. rPPG)
+            track_id: Optional ID from object tracker to use cached result
+            pre_detected_face: Optional DetectedFace to bypass face detection step
         Returns:
             AuthenticationResult with success status and student info
         """
         import time
         start_time = time.time()
+        
+        if track_id is not None and track_id in self.track_cache:
+            cache_entry = self.track_cache.get(track_id)
+            if cache_entry and (start_time - cache_entry["timestamp"] < self.cache_ttl):
+                logger.info(f"Using cached authentication for TrackID: {track_id}")
+                return cache_entry["result"]
+            elif cache_entry:
+                del self.track_cache[track_id]
+                
         quality_issues = []
         quality_score = 1.0
         
         try:
             # Step 1: Detect face FIRST (needed for quality check)
             t_det0 = time.time()
-            faces = self.face_detector.detect(image, max_faces=5)
+            if pre_detected_face is not None:
+                faces = [pre_detected_face]
+            else:
+                faces = self.face_detector.detect(image, max_faces=5)
             t_det1 = time.time()
             logger.info(f"[Perf] FaceDetector.detect took {(t_det1-t_det0)*1000:.2f}ms")
             
@@ -222,6 +243,7 @@ class AuthenticationService:
             # We now have multiple frames for temporal analysis (rPPG & Screen Flicker)
             from app.ml.anti_spoofing import extract_rppg_signal, detect_screen_flicker
             
+            texture_conf = liveness_result.confidence
             rppg_score = 1.0
             flicker_score = 1.0
             
@@ -231,14 +253,11 @@ class AuthenticationService:
                 rppg_score = extract_rppg_signal(frames, face_bbox)
                 flicker_score = detect_screen_flicker(frames, face_bbox)
             else:
-                logger.info("No temporal frames provided or insufficient frames, using single-frame heuristic fallback")
-                heuristic_result = self.anti_spoofing._heuristic_detection(face_crop_liveness)
-                rppg_score = heuristic_result.confidence
-                flicker_score = heuristic_result.confidence
+                logger.info("No temporal frames provided or insufficient frames, using texture-only anti-spoof signals")
+                rppg_score = texture_conf
+                flicker_score = texture_conf
                 
             # Combine Model + Temporal Signals (Defense in depth)
-            texture_conf = liveness_result.confidence
-            
             # Weighted fusion
             # Texture confidence is heavily weighted because MiniFASNet is very accurate.
             # rPPG & flicker are supplementary signals to catch sophisticated masks.
@@ -259,17 +278,16 @@ class AuthenticationService:
             else:
                 spoof_t = liveness_result.spoof_type if not liveness_result.is_real else "replay_fullscreen"
                 
-            # Set high threshold now that MiniFASNet calculates colors correctly
-            is_real_combined = final_score >= 0.70
+            # P4-05: Real face determination based on FUSED final_score (not raw MiniFASNet)
+            # final_score = texture(70%) + rPPG(20%) + flicker(10%)
+            liveness_score = final_score  # Use fused score, not raw model score
+            is_real = liveness_score >= self.liveness_threshold
             
             t_spoof1 = time.time()
-            logger.info(f"[Perf] AntiSpoofing.detect took {(t_spoof1-t_spoof0)*1000:.2f}ms")
-            
-            liveness_score = final_score
-            is_real = is_real_combined
+            logger.info(f"[Perf] AntiSpoofing.detect took {(t_spoof1-t_spoof0)*1000:.2f}ms | texture={texture_conf:.2f}, rPPG={rppg_score:.2f}, flicker={flicker_score:.2f}, final={liveness_score:.2f}, is_real={is_real}")
             
             if not is_real:
-                error_msg = f"Phát hiện giả mạo: {spoof_t} (Score: {final_score:.2f})"
+                error_msg = f"Phát hiện giả mạo: {spoof_t} (Score: {liveness_score:.2f})"
                 await self._write_audit_log(db, "SPOOF_DETECTED", start_time, error_msg=error_msg, liveness=liveness_score, quality_score=quality_score)
                 await db.commit()
                 return AuthenticationResult(
@@ -308,6 +326,22 @@ class AuthenticationService:
             match_result = await self._find_matching_student(
                 query_embedding, db
             )
+
+            # If no match, retry with mirrored embedding to handle camera/register
+            # orientation inconsistencies (common with front-camera mirror UX).
+            if match_result is None:
+                aligned_for_retry = face.aligned_face if face.aligned_face is not None else self._align_face_simple(image, face)
+                try:
+                    if aligned_for_retry is not None and aligned_for_retry.size > 0:
+                        mirrored_face = cv2.flip(aligned_for_retry, 1)
+                        mirrored_emb_result = self.face_recognizer.extract_embedding(mirrored_face)
+                        if mirrored_emb_result.is_valid:
+                            mirror_match = await self._find_matching_student(mirrored_emb_result.embedding, db)
+                            if mirror_match is not None:
+                                logger.info("Mirror-embedding fallback produced a valid face match")
+                                match_result = mirror_match
+                except Exception as mirror_err:
+                    logger.warning(f"Mirror fallback matching failed: {mirror_err}")
             
             if match_result is None:
                 error_msg = "Không tìm thấy sinh viên. Vui lòng đăng ký trước."
@@ -322,30 +356,29 @@ class AuthenticationService:
                     quality_score=quality_score
                 )
                 
-            student, similarity = match_result
+            student_id, full_name, role, similarity = match_result
             
             # Step 6 (Layer 6): Continuous Learning
-            # If the match implies very high confidence but we haven't maxed out their embeddings
-            # Or perhaps we should just add it asynchronously if it provides a new angle.
             if similarity >= settings.continuous_learning_threshold and is_real and settings.continuous_learning_enabled:
-                # Fire and forget adding embedding
-                import asyncio
-                # We need a disconnected session or to do it in the background properly.
-                # For now, we do it within the current transaction since we are updating last_login anyway.
-                await self._trigger_continuous_learning(student.student_id, query_embedding, quality_score, db)
+                await self._trigger_continuous_learning(student_id, query_embedding, quality_score, db)
             
-            # Update last login
-            student.last_login = datetime.utcnow()
+            # Step 7: Update last login (Direct DB update for performance)
+            from sqlalchemy import update
+            from app.models.student import Student
+            await db.execute(
+                update(Student)
+                .where(Student.student_id == student_id)
+                .values(last_login=datetime.utcnow())
+            )
             
-            await self._write_audit_log(db, "AUTH_SUCCESS", start_time, student_id=student.student_id, conf=similarity, liveness=liveness_score, quality_score=quality_score)
-            
+            await self._write_audit_log(db, "AUTH_SUCCESS", start_time, student_id=student_id, conf=similarity, liveness=liveness_score, quality_score=quality_score)
             await db.commit()
             
-            return AuthenticationResult(
+            result_obj = AuthenticationResult(
                 success=True,
-                student_id=student.student_id,
-                student_name=student.full_name,
-                role=student.role.value if hasattr(student.role, 'value') else student.role,
+                student_id=student_id,
+                student_name=full_name,
+                role=role.value if hasattr(role, 'value') else role,
                 confidence=similarity,
                 liveness_score=liveness_score,
                 is_real_face=is_real,
@@ -353,6 +386,14 @@ class AuthenticationService:
                 processing_time_ms=(time.time() - start_time) * 1000,
                 quality_score=quality_score
             )
+            
+            if track_id is not None:
+                self.track_cache[track_id] = {
+                    "result": result_obj,
+                    "timestamp": time.time()
+                }
+            
+            return result_obj
             
         except Exception as e:
             logger.error(f"Authentication failed: {e}", exc_info=True)
@@ -397,109 +438,110 @@ class AuthenticationService:
                 )
                 db.add(face_embedding)
                 
-                # Add to FAISS as well
+                # Add to FAISS cache without waiting for next full sync
                 from app.core.ml_container import AIModels
                 
                 # Note: db.flush() is needed to get the sequence ID before commit
                 await db.flush()
                 if AIModels.faiss_engine:
-                    AIModels.faiss_engine.add_embedding(face_embedding.id, student_id, new_embedding)
+                    # Fetch student metadata for the FAISS metadata cache
+                    meta_stmt = select(Student.full_name, Student.role).where(Student.student_id == student_id)
+                    meta_result = await db.execute(meta_stmt)
+                    meta_row = meta_result.first()
+                    metadata = {
+                        "full_name": meta_row.full_name if meta_row else student_id,
+                        "role": meta_row.role if meta_row else "STUDENT",
+                    }
+                    AIModels.faiss_engine.add_embedding(new_embedding, student_id, metadata)
                 
                 logger.info(f"Continuous Learning: Auto-registered new face vector for {student_id}")
         except Exception as e:
             logger.warning(f"Continuous learning step failed non-fatally: {e}")
 
-    
-    async def _find_matching_student(
-        self,
-        query_embedding: np.ndarray,
-        db: AsyncSession
-    ) -> Optional[Tuple[Student, float]]:
+    async def _find_matching_student(self, query_embedding: np.ndarray, db: AsyncSession) -> Optional[Tuple[str, str, str, float]]:
         """
-        Find matching student by comparing against ALL embeddings.
-        
-        Layer 3 Architecture:
-        1. Query FAISS in-memory index for sub-millisecond retrieval.
-        2. Fallback to pgvector if FAISS isn't ready or fails.
+        Match face embedding against the student database.
+
+        Strategy (fast-path first):
+        1. FAISS (in-memory, <1ms) — primary path.  Uses Inner Product on L2-normalized
+           vectors, which equals cosine similarity.
+        2. pgvector fallback — used only when FAISS is not ready (e.g., cold start,
+           a brand-new registration that hasn't been synced yet).
+
+        Returns (student_id, full_name, role, similarity) or None.
         """
         import time
         from app.core.ml_container import AIModels
+
         start_t = time.time()
-        
-        # 1. FAISS Fast Retrieval with Adaptive Threshold (Layer 4)
-        if AIModels.faiss_engine and AIModels.faiss_engine.is_ready:
-            try:
-                faiss_results = AIModels.faiss_engine.search(query_embedding, top_k=3)
-                
-                if faiss_results:
-                    # Group by student_id
-                    student_scores = {}
-                    for s_id, score in faiss_results:
-                        if s_id not in student_scores:
-                            student_scores[s_id] = []
-                        student_scores[s_id].append(score)
-                        
-                    # Find best student
-                    best_student_id = None
-                    best_final_score = -1.0
-                    
-                    for s_id, scores in student_scores.items():
-                        max_score = max(scores)
-                        # Corroborating Evidence Threshold Logic:
-                        # If multiple embeddings match well, we can slightly relax the threshold
-                        # because it means the face aligns well with the "cluster" of this student's face.
-                        corroborating_threshold = self.similarity_threshold
-                        if len(scores) > 1 and min(scores) > (self.similarity_threshold - 0.1):
-                            corroborating_threshold -= 0.05  # Relax threshold by 5% if corroborating vectors exist
-                            
-                        if max_score >= corroborating_threshold and max_score > best_final_score:
-                            best_final_score = max_score
-                            best_student_id = s_id
-                            
-                    if best_student_id:
-                        # Fetch student details from DB quickly
-                        stmt = select(Student).where(Student.student_id == best_student_id, Student.status == StudentStatus.ACTIVE.value)
-                        result = await db.execute(stmt)
-                        student = result.scalar_one_or_none()
-                        
-                        if student:
-                            logger.debug(f"FAISS search completed in {(time.time() - start_t) * 1000:.2f}ms (matched: {best_student_id}, score: {best_final_score:.2f})")
-                            return student, best_final_score
-            except Exception as e:
-                logger.error(f"FAISS search error, falling back to pgvector: {e}")
-                
-        # 2. Fallback to pgvector
-        start_t_pg = time.time()
+
+        # ── PATH 1: FAISS (sub-millisecond) ─────────────────────────────────────
+        faiss_engine = AIModels.faiss_engine
+        if faiss_engine and faiss_engine.is_ready and faiss_engine.current_idx > 0:
+            results = faiss_engine.search(query_embedding, top_k=3)
+
+            if results:
+                best = results[0]
+                score: float = best["score"]  # cosine similarity (0–1)
+
+                if score >= self.similarity_threshold:
+                    elapsed_ms = (time.time() - start_t) * 1000
+                    logger.debug(
+                        f"FAISS match: {best['student_id']} ({best['full_name']}) "
+                        f"| Sim: {score:.3f} | {elapsed_ms:.1f}ms"
+                    )
+                    return best["student_id"], best["full_name"], best.get("role", "STUDENT"), score
+
+            # FAISS returned results but all below threshold — definitive no-match.
+            elapsed_ms = (time.time() - start_t) * 1000
+            best_score = results[0]["score"] if results else 0.0
+            logger.debug(
+                f"FAISS: no match above threshold {self.similarity_threshold} "
+                f"(best={best_score:.3f}) | {elapsed_ms:.1f}ms"
+            )
+            return None
+
+        # ── PATH 2: pgvector fallback (when FAISS not ready) ────────────────────
+        logger.warning("FAISS not ready — falling back to pgvector search (slow path)")
+        from app.models.face_embedding import FaceEmbedding
+        from app.models.student import Student, StudentStatus
+        from sqlalchemy import and_, select
+
         distance_threshold = 1.0 - self.similarity_threshold
-        
-        # Adaptive Threshold (Simulated concept for production readiness)
-        # In a real enterprise system, each user has a personalized threshold 
-        # based on their registration variance
-        
+
         stmt = (
-            select(Student, FaceEmbedding, FaceEmbedding.embedding.cosine_distance(query_embedding).label("distance"))
+            select(
+                Student.student_id,
+                Student.full_name,
+                Student.role,
+                FaceEmbedding.embedding.cosine_distance(query_embedding).label("distance"),
+            )
             .join(FaceEmbedding, Student.student_id == FaceEmbedding.student_id)
             .where(
                 and_(
                     Student.status == StudentStatus.ACTIVE.value,
-                    FaceEmbedding.embedding.cosine_distance(query_embedding) <= distance_threshold
+                    FaceEmbedding.embedding.cosine_distance(query_embedding) <= distance_threshold,
                 )
             )
-            .order_by(FaceEmbedding.embedding.cosine_distance(query_embedding))
+            .order_by("distance")
             .limit(1)
         )
-        
+
         result = await db.execute(stmt)
         row = result.first()
-        
+
+        elapsed_ms = (time.time() - start_t) * 1000
         if not row:
+            logger.debug(f"pgvector fallback: no match | {elapsed_ms:.1f}ms")
             return None
-            
-        student, face_emb, distance = row
-        similarity = 1.0 - distance
-        
-        logger.debug(f"pgvector search completed in {(time.time() - start_t_pg) * 1000:.2f}ms")
-        return student, similarity
+
+        student_id, full_name, role, distance = row
+        similarity = 1.0 - float(distance)
+        logger.debug(
+            f"pgvector fallback match: {student_id} ({full_name}) "
+            f"| Sim: {similarity:.3f} | {elapsed_ms:.1f}ms"
+        )
+        return student_id, full_name, role, similarity
     
     def _crop_face(self, image: np.ndarray, face: DetectedFace, scale: float = 1.0) -> np.ndarray:
         """Crop face region from image. Scale > 1.0 captures more background context."""
@@ -725,9 +767,12 @@ class AuthenticationService:
             # Sync FAISS immediately (B02)
             from app.core.ml_container import AIModels
             if AIModels.faiss_engine:
-                # Ensure the embedding is L2 normalized before adding (B14 proxy)
-                emb_norm = embedding_result.embedding / (np.linalg.norm(embedding_result.embedding) + 1e-6)
-                AIModels.faiss_engine.add_embedding(face_embedding.id, student_id, emb_norm)
+                # Embedding is already L2-normalized by extract_embedding()
+                metadata = {
+                    "full_name": student.full_name if student else student_id,
+                    "role": student.role if student else "STUDENT"
+                }
+                AIModels.faiss_engine.add_embedding(embedding_result.embedding, student_id, metadata)
             
             new_total = existing_count + 1
             

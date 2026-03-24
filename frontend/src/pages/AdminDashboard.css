@@ -334,13 +334,16 @@
     color: #94a3b8;
 }
 
-.form-group input {
+.form-group input,
+.form-group textarea {
     background: rgba(15, 23, 42, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.1);
     padding: 1rem;
     border-radius: 12px;
     color: white;
     font-size: 1rem;
+    font-family: inherit;
+    resize: vertical;
 }
 
 .form-group input:focus {
@@ -613,3 +616,224 @@
     justify-content: flex-end;
     margin-bottom: 1.5rem;
 }
+
+/* ── Toolbar ──────────────────────────────────────────────────── */
+.table-toolbar {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+
+.search-input {
+    flex: 1;
+    min-width: 200px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    padding: 0.7rem 1rem;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.search-input:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.table-toolbar select {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    padding: 0.7rem 1rem;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s;
+}
+
+.table-toolbar select:focus {
+    border-color: #3b82f6;
+}
+
+.form-group select {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    padding: 0.9rem 1rem;
+    border-radius: 12px;
+    font-size: 1rem;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+    cursor: pointer;
+}
+
+.form-group select:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+}
+
+.form-group textarea {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: white;
+    padding: 1rem;
+    border-radius: 12px;
+    font-size: 1rem;
+    font-family: inherit;
+    resize: vertical;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.form-group textarea:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+}
+
+/* ── Ghost Button ─────────────────────────────────────────────── */
+.btn-ghost {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #94a3b8;
+    padding: 0.7rem 1.2rem;
+}
+
+.btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+/* ── Icon action buttons (✏️ 🗑️ 💸) ──────────────────────────── */
+.action-cell {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.btn-icon {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #94a3b8;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: 0.2s;
+    padding: 0;
+}
+
+.btn-icon:hover {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.4);
+    color: #3b82f6;
+    transform: scale(1.1);
+}
+
+.btn-icon.danger:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.4);
+    color: #ef4444;
+}
+
+.btn-icon.warning:hover {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: rgba(245, 158, 11, 0.4);
+    color: #f59e0b;
+}
+
+.btn-icon:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ── Pagination ───────────────────────────────────────────────── */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    padding: 1.5rem 0 0;
+    color: #94a3b8;
+    font-size: 0.9rem;
+}
+
+.pagination button {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #94a3b8;
+    padding: 0.5rem 1.2rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.pagination button:hover:not(:disabled) {
+    background: #3b82f6;
+    color: white;
+    border-color: #3b82f6;
+}
+
+.pagination button:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* ── Loading row ──────────────────────────────────────────────── */
+.loading-row {
+    text-align: center;
+    padding: 3rem;
+    color: #94a3b8;
+    font-size: 1rem;
+    background: #1e293b;
+    border-radius: 20px;
+    margin-top: 2rem;
+}
+
+/* ── Text utilities ───────────────────────────────────────────── */
+.text-danger { color: #ef4444; font-weight: 600; }
+
+/* ── Status pill extras ───────────────────────────────────────── */
+.status-pill.suspended {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+}
+
+.status-pill.graduated {
+    background: rgba(139, 92, 246, 0.1);
+    color: #a78bfa;
+}
+
+.status-pill.inactive {
+    background: rgba(100, 116, 139, 0.15);
+    color: #94a3b8;
+}
+
+.status-pill.damaged {
+    background: rgba(249, 115, 22, 0.1);
+    color: #fb923c;
+}
+
+.status-pill.lost {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+}
+
+/* ── Modal overflow scroll ────────────────────────────────────── */
+.modal-content {
+    max-height: 90vh;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.1) transparent;
+}

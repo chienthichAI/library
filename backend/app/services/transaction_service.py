@@ -8,8 +8,9 @@ from typing import Optional, List, Tuple
 from datetime import datetime, date, timedelta
 from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func, or_
 from loguru import logger
+from cachetools import TTLCache
 
 from app.models.student import Student
 from app.models.book import Book, BookStatus
@@ -140,8 +141,15 @@ class TransactionService:
                     error_message=f"Còn nợ tiền phạt: {student.fine_balance:,.0f} VND"
                 )
                 
-            # Validate book
-            book = await self._get_book(book_id, db)
+            # Validate and lock book row to prevent concurrent borrow race.
+            # We bypass cache here to ensure fresh state under transaction lock.
+            book_stmt = (
+                select(Book)
+                .where(or_(Book.book_id == book_id, Book.barcode == book_id))
+                .with_for_update()
+            )
+            book_result = await db.execute(book_stmt)
+            book = book_result.scalar_one_or_none()
             if not book:
                 return BorrowResult(
                     success=False,
@@ -160,6 +168,31 @@ class TransactionService:
                     error_message=f"Sách hiện không khả dụng (trạng thái: {book.status.value})"
                 )
                 
+            # Check for duplicate active transaction (idempotent borrow) under lock
+            # Real-world case: student scans the same book twice (slow UI, double tap)
+            existing_stmt = (
+                select(Transaction)
+                .where(
+                    and_(
+                        Transaction.student_id == student_id,
+                        Transaction.book_id == book.book_id,
+                        Transaction.status.in_([TransactionStatus.ACTIVE, TransactionStatus.OVERDUE])
+                    )
+                )
+                .with_for_update()
+            )
+            existing_result = await db.execute(existing_stmt)
+            existing_txn = existing_result.scalar_one_or_none()
+            if existing_txn:
+                logger.warning(f"Idempotent borrow: student {student_id} already has book {book.book_id}")
+                return BorrowResult(
+                    success=True,
+                    transaction_id=existing_txn.transaction_id,
+                    book_title=book.title,
+                    due_date=existing_txn.due_date,
+                    error_message=None
+                )
+
             # Create transaction
             now = datetime.utcnow()
             due_date = (now + timedelta(days=self.max_borrow_days)).date()
@@ -180,6 +213,11 @@ class TransactionService:
             db.add(transaction)
             await db.commit()
             await db.refresh(transaction)
+            
+            # Invalidate stale cache entries after mutation
+            self._book_cache.pop(book_id, None)
+            self._book_cache.pop(book.book_id, None)
+            self._student_cache.pop(student_id, None)
             
             logger.info(f"Book borrowed: {book.title} by {student.full_name}")
             
@@ -253,10 +291,19 @@ class TransactionService:
             
             # Update student fine balance if applicable
             if fine_amount > 0:
-                student = await self._get_student(student_id, db)
-                student.fine_balance += fine_amount
+                # Bypass cache for mutation
+                stmt_st = select(Student).where(Student.student_id == student_id)
+                res_st = await db.execute(stmt_st)
+                student = res_st.scalar_one_or_none()
+                if student:
+                    student.fine_balance += fine_amount
                 
             await db.commit()
+            
+            # Invalidate stale cache entries after mutation
+            self._book_cache.pop(book_id, None)
+            self._book_cache.pop(book.book_id, None)
+            self._student_cache.pop(student_id, None)
             
             logger.info(f"Book returned: {book.title} by student {student_id}, fine: {fine_amount}")
             
@@ -323,6 +370,117 @@ class TransactionService:
             active_transactions=list(active_transactions)
         )
     
+    async def renew_book(
+        self,
+        student_id: str,
+        book_id: str,
+        db: AsyncSession,
+        kiosk_id: Optional[str] = None
+    ) -> BorrowResult:
+        """
+        Renew an active borrow transaction — extend due date by max_borrow_days.
+
+        Rules:
+        - Student must have no outstanding fines
+        - Book must have an active transaction
+        - Renewal is only allowed once per transaction (to prevent abuse)
+        """
+        try:
+            transaction = await self._find_active_transaction(student_id, book_id, db)
+            if not transaction:
+                return BorrowResult(
+                    success=False,
+                    transaction_id=None,
+                    book_title=None,
+                    due_date=None,
+                    error_message="Không tìm thấy giao dịch mượn sách để gia hạn"
+                )
+
+            # Check if already renewed
+            if getattr(transaction, 'renewal_count', 0) >= 1:
+                return BorrowResult(
+                    success=False,
+                    transaction_id=transaction.transaction_id,
+                    book_title=None,
+                    due_date=transaction.due_date,
+                    error_message="Sách đã được gia hạn 1 lần, không thể gia hạn thêm"
+                )
+
+            # Check fines
+            student = await self._get_student(student_id, db)
+            if student and student.fine_balance > 0:
+                return BorrowResult(
+                    success=False,
+                    transaction_id=transaction.transaction_id,
+                    book_title=None,
+                    due_date=transaction.due_date,
+                    error_message=f"Còn nợ tiền phạt {student.fine_balance:,.0f} VND, không thể gia hạn"
+                )
+
+            book = await self._get_book(book_id, db)
+            new_due = (datetime.utcnow() + timedelta(days=self.max_borrow_days)).date()
+            transaction.due_date = new_due
+            transaction.status = TransactionStatus.ACTIVE  # Reset overdue flag if any
+
+            # Increment renewal counter (requires migration if column not yet added)
+            if hasattr(transaction, 'renewal_count'):
+                transaction.renewal_count = (transaction.renewal_count or 0) + 1
+
+            await db.commit()
+
+            # Invalidate cache
+            self._book_cache.pop(book_id, None)
+            self._student_cache.pop(student_id, None)
+
+            logger.info(f"Book renewed: {book.title if book else book_id} → new due {new_due}")
+            return BorrowResult(
+                success=True,
+                transaction_id=transaction.transaction_id,
+                book_title=book.title if book else book_id,
+                due_date=new_due,
+                error_message=None
+            )
+
+        except Exception as e:
+            logger.error(f"Renew failed: {e}")
+            await db.rollback()
+            return BorrowResult(
+                success=False,
+                transaction_id=None,
+                book_title=None,
+                due_date=None,
+                error_message=f"Lỗi hệ thống: {str(e)}"
+            )
+
+    async def get_overdue_summary(self, db: AsyncSession) -> dict:
+        """
+        Get system-wide overdue statistics for admin dashboard.
+
+        Returns:
+        - total_overdue: number of overdue transactions
+        - total_fine_pending: total uncollected fine amount (VND)
+        """
+        try:
+            from datetime import date as date_type
+            today = date_type.today()
+
+            stmt = select(Transaction).where(
+                Transaction.status.in_([TransactionStatus.ACTIVE, TransactionStatus.OVERDUE]),
+                Transaction.due_date < today
+            )
+            result = await db.execute(stmt)
+            overdue_txns = result.scalars().all()
+
+            total_fine = sum(t.calculate_fine(self.fine_per_day) for t in overdue_txns)
+
+            return {
+                "total_overdue": len(overdue_txns),
+                "total_fine_pending": total_fine
+            }
+        except Exception as e:
+            logger.error(f"Overdue summary error: {e}")
+            return {"total_overdue": 0, "total_fine_pending": 0}
+
     async def get_transaction_history(
         self,
         student_id: str,
@@ -336,10 +494,10 @@ class TransactionService:
         Returns:
             Tuple of (transactions, total_count)
         """
-        # Count total
-        count_stmt = select(Transaction).where(Transaction.student_id == student_id)
+        # Count total (SQL COUNT — O(1) memory)
+        count_stmt = select(func.count()).select_from(Transaction).where(Transaction.student_id == student_id)
         result = await db.execute(count_stmt)
-        total = len(result.scalars().all())
+        total = result.scalar() or 0
         
         # Get paginated transactions
         stmt = (
@@ -354,26 +512,39 @@ class TransactionService:
         
         return list(transactions), total
     
+    # In-memory TTL caches for hot-path lookups (P3-02)
+    _student_cache = TTLCache(maxsize=200, ttl=60)
+    _book_cache = TTLCache(maxsize=500, ttl=60)
+
     async def _get_student(self, student_id: str, db: AsyncSession) -> Optional[Student]:
-        """Get student by ID."""
+        """Get student by ID (with TTL cache)."""
+        if student_id in self._student_cache:
+            return self._student_cache[student_id]
         stmt = select(Student).where(Student.student_id == student_id)
         result = await db.execute(stmt)
-        return result.scalar_one_or_none()
+        student = result.scalar_one_or_none()
+        if student:
+            self._student_cache[student_id] = student
+        return student
     
     async def _get_book(self, book_id: str, db: AsyncSession) -> Optional[Book]:
-        """Get book by ID or barcode."""
+        """Get book by ID or barcode (with TTL cache)."""
+        if book_id in self._book_cache:
+            return self._book_cache[book_id]
         # Try by book_id
         stmt = select(Book).where(Book.book_id == book_id)
         result = await db.execute(stmt)
         book = result.scalar_one_or_none()
         
+        if not book:
+            # Try by barcode
+            stmt = select(Book).where(Book.barcode == book_id)
+            result = await db.execute(stmt)
+            book = result.scalar_one_or_none()
+        
         if book:
-            return book
-            
-        # Try by barcode
-        stmt = select(Book).where(Book.barcode == book_id)
-        result = await db.execute(stmt)
-        return result.scalar_one_or_none()
+            self._book_cache[book_id] = book
+        return book
     
     async def _find_active_transaction(
         self,

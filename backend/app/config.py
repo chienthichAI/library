@@ -3,7 +3,7 @@ SmartLib Kiosk - Configuration Settings
 Supports Supabase PostgreSQL
 """
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
 from typing import Optional
 from functools import lru_cache
 
@@ -61,12 +61,24 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
     disable_model_source_check: bool = True
+    require_real_models: bool = True
     
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
         case_sensitive = False
         extra = "ignore"
+
+    @model_validator(mode="after")
+    def validate_security(self):
+        env = (self.app_env or "").lower()
+        if env not in {"development", "dev", "local"}:
+            if self.secret_key == "change-this-in-production" or len(self.secret_key) < 32:
+                raise ValueError(
+                    "SECRET_KEY không an toàn cho môi trường non-development. "
+                    "Hãy đặt SECRET_KEY ngẫu nhiên tối thiểu 32 ký tự."
+                )
+        return self
 
 
 @lru_cache()

@@ -14,6 +14,7 @@ export default function BookReturnScreen() {
     const [borrowingInfo, setBorrowingInfo] = useState(null)
     const [detectedBook, setDetectedBook] = useState(null)
     const [transactionResult, setTransactionResult] = useState(null)
+    const [detectionError, setDetectionError] = useState('')
 
     // Camera states
     const [devices, setDevices] = useState([])
@@ -146,29 +147,19 @@ export default function BookReturnScreen() {
     }
 
     const handleDetectBook = async () => {
-        if (!videoRef.current || !canvasRef.current) return
+        if (!videoRef.current || !canvasRef.current || isProcessing || detectionStatus === 'detecting') return
 
         setDetectionStatus('detecting')
+        setDetectionError('')
 
-        const video = videoRef.current
-        const canvas = canvasRef.current
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
-        canvas.getContext('2d').drawImage(video, 0, 0)
+        try {
+            // Try multiple frames to reduce false negatives from motion blur/lighting.
+            const maxAttempts = 3
+            let lastError = 'Không nhận diện được sách. Vui lòng đưa mã vạch vào giữa khung và thử lại.'
 
-        canvas.toBlob(async (blob) => {
-            try {
-                const formData = new FormData()
-                formData.append('image', blob, 'book.jpg')
-
-                const response = await fetch(`${API_URL}/books/detect`, {
-                    method: 'POST',
-                    body: formData
-                })
-
-                const result = await response.json()
-
-                if (result.success && result.book_exists) {
+            for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+                const result = await captureAndDetect()
+                if (result?.success && result.book_exists) {
                     setDetectedBook({
                         id: result.book_id,
                         title: result.title,
@@ -178,15 +169,53 @@ export default function BookReturnScreen() {
                         confidence: result.detection_confidence
                     })
                     setDetectionStatus('found')
-                } else {
-                    setDetectedBook(null)
-                    setDetectionStatus('not_found')
+                    setDetectionError('')
+                    return
                 }
-            } catch (err) {
-                console.error('Detection error:', err)
-                setDetectionStatus('not_found')
+
+                if (result?.error_message) {
+                    lastError = result.error_message
+                }
+                await new Promise(resolve => setTimeout(resolve, 250))
             }
-        }, 'image/jpeg', 0.9)
+
+            setDetectedBook(null)
+            setDetectionError(lastError)
+            setDetectionStatus('not_found')
+        } catch (err) {
+            console.error('Detection error:', err)
+            setDetectedBook(null)
+            setDetectionError('Lỗi kết nối khi quét sách. Vui lòng thử lại.')
+            setDetectionStatus('not_found')
+        }
+    }
+
+    const captureAndDetect = async () => {
+        const video = videoRef.current
+        const canvas = canvasRef.current
+        if (!video || !canvas || video.videoWidth === 0 || video.videoHeight === 0) return null
+
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        canvas.getContext('2d').drawImage(video, 0, 0)
+
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92))
+        if (!blob) return null
+
+        const formData = new FormData()
+        formData.append('image', blob, 'book.jpg')
+
+        const response = await fetch(`${API_URL}/books/detect`, {
+            method: 'POST',
+            body: formData
+        })
+
+        const result = await response.json()
+        if (!response.ok) {
+            return { success: false, error_message: result?.detail || 'Không thể nhận diện sách' }
+        }
+
+        return result
     }
 
     const handleBorrow = async () => {
@@ -199,7 +228,8 @@ export default function BookReturnScreen() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     student_id: student.id,
-                    book_id: detectedBook.id
+                    book_id: detectedBook.id,
+                    verification_token: student.verification_token
                 })
             })
 
@@ -233,7 +263,8 @@ export default function BookReturnScreen() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     student_id: student.id,
-                    book_id: detectedBook.id
+                    book_id: detectedBook.id,
+                    verification_token: student.verification_token
                 })
             })
 
@@ -255,7 +286,8 @@ export default function BookReturnScreen() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     student_id: student.id,
-                    book_id: detectedBook.id
+                    book_id: detectedBook.id,
+                    verification_token: student.verification_token
                 })
             })
 
@@ -282,6 +314,7 @@ export default function BookReturnScreen() {
         setDetectionStatus('idle')
         setDetectedBook(null)
         setTransactionResult(null)
+        setDetectionError('')
     }
 
     if (!student) return null
@@ -408,7 +441,7 @@ export default function BookReturnScreen() {
 
                             {detectionStatus === 'not_found' && (
                                 <div className="book-result not-found animate-fade-in">
-                                    <p>❌ Không nhận diện được sách. Vui lòng thử lại.</p>
+                                    <p>❌ {detectionError || 'Không nhận diện được sách. Vui lòng thử lại.'}</p>
                                     <button className="btn btn-secondary" onClick={handleReset}>
                                         Thử lại
                                     </button>

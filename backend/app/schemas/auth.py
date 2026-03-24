@@ -30,6 +30,8 @@ class FaceVerifyResponse(BaseModel):
     processing_time_ms: float
     quality_score: float = 1.0
     quality_issues: Optional[List[str]] = None
+    verification_token: Optional[str] = None
+    token_expires_in_seconds: Optional[int] = None
     
     class Config:
         json_schema_extra = {
@@ -43,7 +45,9 @@ class FaceVerifyResponse(BaseModel):
                 "error_message": None,
                 "processing_time_ms": 142.5,
                 "quality_score": 0.95,
-                "quality_issues": None
+                "quality_issues": None,
+                "verification_token": "eyJzdHVkZW50X2lkIjoiRlBUMjAyNDAwMDEifQ.signature",
+                "token_expires_in_seconds": 300
             }
         }
 

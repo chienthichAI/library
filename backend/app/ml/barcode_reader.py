@@ -122,7 +122,7 @@ class BarcodeReader:
                 
                 for barcode in barcodes:
                     # Extract data
-                    data = barcode.data.decode('utf-8', errors='ignore')
+                    data = barcode.data.decode('utf-8', errors='ignore').strip()
                     barcode_type = barcode.type
                     
                     # Get bounding box
@@ -140,8 +140,11 @@ class BarcodeReader:
                     )
                     
                     # Avoid duplicates
-                    if not any(r.data == data for r in results):
+                    existing_idx = next((i for i, r in enumerate(results) if r.data == data), None)
+                    if existing_idx is None:
                         results.append(result)
+                    elif result.confidence > results[existing_idx].confidence:
+                        results[existing_idx] = result
                         
             except Exception as e:
                 logger.debug(f"Barcode decode error: {e}")

@@ -60,8 +60,10 @@ class BookResponse(BaseModel):
     publisher: Optional[str]
     publication_year: Optional[int]
     language: str
+    subject_category: Optional[str]
+    description: Optional[str]
     status: BookStatus
-    created_at: datetime
+    created_at: Optional[datetime]
     
     class Config:
         from_attributes = True
@@ -82,3 +84,5 @@ class BookIdentificationResponse(BaseModel):
     processing_time_ms: float
     book_exists: bool
     is_available: bool
+    subject_category: Optional[str] = None
+    description: Optional[str] = None

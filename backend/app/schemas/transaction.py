@@ -25,6 +25,7 @@ class BorrowRequest(BaseModel):
     """Schema for borrow book request."""
     student_id: str = Field(..., description="Student ID (verified by face)")
     book_id: str = Field(..., description="Book ID or barcode")
+    verification_token: str = Field(..., description="Short-lived face verification token")
     kiosk_id: Optional[str] = None
     
     class Config:
@@ -32,6 +33,7 @@ class BorrowRequest(BaseModel):
             "example": {
                 "student_id": "FPT20240001",
                 "book_id": "978-0-596-52068-7",
+                "verification_token": "Bearer token from /auth/verify-face",
                 "kiosk_id": "KIOSK_001"
             }
         }
@@ -41,6 +43,7 @@ class ReturnRequest(BaseModel):
     """Schema for return book request."""
     student_id: str = Field(..., description="Student ID (verified by face)")
     book_id: str = Field(..., description="Book ID or barcode")
+    verification_token: str = Field(..., description="Short-lived face verification token")
     kiosk_id: Optional[str] = None
 
 

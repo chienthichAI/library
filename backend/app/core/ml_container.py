@@ -9,7 +9,6 @@ from app.ml.face_detector import FaceDetector
 from app.ml.face_recognition import FaceRecognizer
 from app.ml.anti_spoofing import AntiSpoofing
 from app.ml.book_detector import BookDetector
-from app.ml.ocr_service import OCRService
 from app.ml.faiss_engine import FaissEngine
 from app.config import settings
 
@@ -19,7 +18,6 @@ class AIModels:
     face_recognizer: Optional[FaceRecognizer] = None
     anti_spoofing: Optional[AntiSpoofing] = None
     book_detector: Optional[BookDetector] = None
-    ocr_service: Optional[OCRService] = None
     faiss_engine: Optional[FaissEngine] = None
     # Future: llm_service can be added here
 
@@ -32,7 +30,8 @@ async def init_ai_models():
         model_name="buffalo_l",
         use_gpu=True
     )
-    AIModels.face_detector.initialize()
+    if not AIModels.face_detector.initialize():
+        raise RuntimeError("Face detector initialization failed")
     
     # 3. Anti-Spoofing (MiniFASNet)
     AIModels.anti_spoofing = AntiSpoofing(
@@ -40,7 +39,8 @@ async def init_ai_models():
         threshold=settings.liveness_threshold,
         use_gpu=True
     )
-    AIModels.anti_spoofing.initialize()
+    if not AIModels.anti_spoofing.initialize():
+        raise RuntimeError("Anti-spoofing model initialization failed")
 
     # 4. Face Recognizer (ArcFace Standalone if needed)
     # Hitch to existing FaceAnalysis instance from face_detector to save VRAM (B05)
@@ -48,18 +48,16 @@ async def init_ai_models():
         face_analysis_instance=getattr(AIModels.face_detector, '_model', None),
         use_gpu=True
     )
-    AIModels.face_recognizer.initialize()
+    if not AIModels.face_recognizer.initialize():
+        raise RuntimeError("Face recognizer initialization failed")
     
     # 5. Book Detector (YOLOv8)
     AIModels.book_detector = BookDetector(
         model_path=settings.yolo_model_path,
         use_gpu=True
     )
-    AIModels.book_detector.initialize()
-    
-    # 6. OCR Service (PaddleOCR)
-    AIModels.ocr_service = OCRService()
-    AIModels.ocr_service.initialize()
+    if not AIModels.book_detector.initialize():
+        raise RuntimeError("Book detector initialization failed")
     
     # 6. FAISS Search Engine
     AIModels.faiss_engine = FaissEngine()
@@ -76,7 +74,6 @@ async def init_ai_models():
         AIModels.face_recognizer.extract_embedding(dummy_112)
         AIModels.anti_spoofing.detect(dummy_112)
         AIModels.book_detector.detect(dummy_img)
-        # Note: OCR might be slow to warm up, but it's okay
         logger.info("AI models warmed up successfully")
     except Exception as e:
         logger.warning(f"Warm up failed: {e}")
