@@ -22,6 +22,7 @@ from app.ml.face_recognition import FaceRecognizer, FaceEmbeddingResult
 from app.ml.anti_spoofing import AntiSpoofing, AntiSpoofingResult
 from app.ml.quality_checker import ImageQualityChecker, QualityCheckResult
 from app.config import settings
+from app.services.face_eval_logger import get_face_eval_logger, FaceEvalLogEntry
 
 
 @dataclass
@@ -121,21 +122,44 @@ class AuthenticationService:
     async def _write_audit_log(self, db: AsyncSession, event_type: str, start_time: float, 
                                student_id: str = None, error_msg: str = None,
                                conf: float = 0.0, liveness: float = 0.0, **kwargs):
-        """Write an audit log entry to the database."""
+        """Write audit log to DB and append evaluation CSV log."""
         from app.models.audit_log import AuditLog
         import time
         try:
             now = time.time()
             proc_time_ms = (now - start_time) * 1000
+            details = {"error": error_msg, **kwargs}
             log_entry = AuditLog(
                 event_type=event_type,
                 student_id=student_id,
                 similarity_score=conf,
                 liveness_score=liveness,
                 processing_time_ms=proc_time_ms,
-                details={"error": error_msg, **kwargs}
+                details=details
             )
             db.add(log_entry)
+
+            # Also export to CSV for offline daily evaluation.
+            try:
+                eval_logger = get_face_eval_logger()
+                eval_logger.log(
+                    FaceEvalLogEntry(
+                        event_type=event_type,
+                        predicted_student_id=student_id or "UNKNOWN",
+                        predicted_student_name=str(kwargs.get("predicted_student_name") or ""),
+                        confidence=float(conf or 0.0),
+                        liveness_score=float(liveness or 0.0),
+                        is_real_face=bool((liveness or 0.0) >= self.liveness_threshold),
+                        quality_score=float(kwargs.get("quality_score") or 0.0),
+                        processing_time_ms=float(proc_time_ms),
+                        error_message=error_msg or "",
+                        source=str(kwargs.get("source") or "api"),
+                        track_id=str(kwargs.get("track_id") or ""),
+                        ground_truth_student_id=str(kwargs.get("ground_truth_student_id") or ""),
+                    )
+                )
+            except Exception as csv_err:
+                logger.warning(f"Failed to write face evaluation CSV log: {csv_err}")
         except Exception as e:
             logger.error(f"Failed to write audit log: {e}")
     
@@ -371,7 +395,17 @@ class AuthenticationService:
                 .values(last_login=datetime.utcnow())
             )
             
-            await self._write_audit_log(db, "AUTH_SUCCESS", start_time, student_id=student_id, conf=similarity, liveness=liveness_score, quality_score=quality_score)
+            await self._write_audit_log(
+                db,
+                "AUTH_SUCCESS",
+                start_time,
+                student_id=student_id,
+                conf=similarity,
+                liveness=liveness_score,
+                quality_score=quality_score,
+                predicted_student_name=full_name,
+                track_id=track_id,
+            )
             await db.commit()
             
             result_obj = AuthenticationResult(
