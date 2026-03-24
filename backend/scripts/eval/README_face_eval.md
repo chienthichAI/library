@@ -5,7 +5,21 @@
 - Every authentication attempt is auto-written to:
   - `backend/logs/face_eval/face_eval_YYYY-MM-DD.csv`
 
-## 2) Fill ground truth
+## 2) Ground truth options
+- Recommended (test mode): send `ground_truth_student_id` directly while calling API/WS.
+- Manual fallback: open CSV at end of day and fill `ground_truth_student_id`.
+
+### A) API test mode (`POST /auth/verify-face`)
+- Send multipart form field:
+  - `ground_truth_student_id=SV001` (or `UNKNOWN`)
+  - optional `source=api_test`
+
+### B) WebSocket test mode (`/auth/ws/stream`)
+- Connect with query param:
+  - `/auth/ws/stream?ground_truth_student_id=SV001`
+- Server will auto-mark `source=ws_test` in CSV.
+
+### C) Manual fallback
 - Open that CSV at the end of day.
 - Fill column `ground_truth_student_id` for each test row:
   - Use real student id (example: `SV001`) if known person is in front of camera.
