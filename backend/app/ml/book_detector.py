@@ -165,9 +165,8 @@ class BookDetector:
                     self._model = YOLO(self.model_path)
                     logger.info(f"Loaded custom YOLOv8 model from: {self.model_path}")
                 else:
-                    # Use pretrained model (will be fine-tuned for books)
-                    self._model = YOLO("yolov8m.pt")
-                    logger.info("Loaded pretrained YOLOv8 medium model")
+                    logger.error(f"YOLO model not found at: {self.model_path}")
+                    return False
                     
                 # Configure device
                 if self.use_gpu:
@@ -176,7 +175,8 @@ class BookDetector:
                         self._model.to('cuda')
                         logger.info("YOLOv8 using CUDA GPU")
             else:
-                logger.warning("YOLO not available. Using fallback detection.")
+                logger.error("Ultralytics YOLO dependency is missing")
+                return False
                 
             self._initialized = True
             return True
@@ -210,10 +210,10 @@ class BookDetector:
             return BookDetectionResult(books=[], barcodes=[], processing_time_ms=0)
             
         try:
-            if self._model is not None:
-                result = self._run_yolo_inference(image, max_detections)
-            else:
-                result = self._fallback_detection(image)
+            if self._model is None:
+                logger.error("Book detector model unavailable during inference")
+                return BookDetectionResult(books=[], barcodes=[], processing_time_ms=0)
+            result = self._run_yolo_inference(image, max_detections)
                 
             processing_time = (time.time() - start_time) * 1000
             result.processing_time_ms = processing_time
@@ -276,47 +276,6 @@ class BookDetector:
                         books.append(detected)
                         
         return BookDetectionResult(books=books, barcodes=barcodes, processing_time_ms=0)
-    
-    def _fallback_detection(self, image: np.ndarray) -> BookDetectionResult:
-        """
-        Fallback detection using traditional CV methods.
-        Uses edge detection and contour analysis.
-        """
-        # Convert to grayscale
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-        
-        # Apply edge detection
-        edges = cv2.Canny(gray, 50, 150)
-        
-        # Dilate to connect edges
-        kernel = np.ones((5, 5), np.uint8)
-        dilated = cv2.dilate(edges, kernel, iterations=2)
-        
-        # Find contours
-        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        books = []
-        min_area = image.shape[0] * image.shape[1] * 0.05  # At least 5% of image
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            
-            if area > min_area:
-                x, y, w, h = cv2.boundingRect(contour)
-                
-                # Check aspect ratio (books are typically rectangular)
-                aspect_ratio = w / h if h > 0 else 0
-                
-                if 0.3 < aspect_ratio < 3.0:  # Reasonable book aspect ratio
-                    detected = DetectedObject(
-                        class_name="book",
-                        confidence=0.7,
-                        bbox=(x, y, x + w, y + h),
-                        class_id=0
-                    )
-                    books.append(detected)
-                    
-        return BookDetectionResult(books=books[:5], barcodes=[], processing_time_ms=0)
     
     def crop_detection(
         self,

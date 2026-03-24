@@ -49,7 +49,7 @@ class StudentResponse(BaseModel):
     status: StudentStatus
     fine_balance: float
     last_login: Optional[datetime]
-    created_at: datetime
+    created_at: Optional[datetime]
     
     class Config:
         from_attributes = True

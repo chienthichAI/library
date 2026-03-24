@@ -4,13 +4,13 @@ SmartLib Kiosk - FastAPI Main Application
 A smart library kiosk system with AI-powered:
 - Face recognition for student authentication (ArcFace)
 - Book detection (YOLOv8)
-- OCR for book identification (PaddleOCR)
 - Transaction management (borrow/return)
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
+import asyncio
 import sys
 
 from app.config import settings
@@ -40,45 +40,63 @@ async def lifespan(app: FastAPI):
     Lifespan events for FastAPI.
     Initializes database and AI models on startup.
     """
-    import os
-    os.environ['PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK'] = 'True'
     logger.info("Starting SmartLib Kiosk API...")
     logger.info(f"Environment: {settings.app_env}")
     logger.info(f"Debug mode: {settings.debug}")
     
     from app.database import async_session_maker
     
-    # 1. Initialize database connection
     try:
-        logger.info("Initializing database...")
-        await init_db()
-        logger.info("Database connection established")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        # Depending on severity, you might want to raise the exception or exit here
-    
-    # 2. Warm up AI models
-    try:
-        logger.info("Initializing AI models...")
-        await init_ai_models()
-        ocr_status = "GPU" if getattr(AIModels.ocr_service, '_ocr', None) else "MOCK"
-        logger.info(f"✓ AI Models loaded (Face: GPU, YOLO: GPU, OCR: {ocr_status})")
-    except Exception as e:
-        logger.error(f"Failed to pre-load AI models: {e}")
+        # 1. Initialize database connection with retry (P3-03)
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                await init_db()
+                logger.info("Database connection established successfully.")
+                break
+            except (Exception, asyncio.CancelledError) as e:
+                if isinstance(e, asyncio.CancelledError):
+                    logger.warning("Database initialization cancelled during startup.")
+                    raise
+                if attempt == max_retries:
+                    logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
+                    raise e
+                logger.warning(f"Database connection attempt {attempt} failed. Retrying in 2s...")
+                await asyncio.sleep(2)
         
-    # 3. Synchronize FAISS Vector Engine
-    try:
-        logger.info("Synchronizing FAISS vector engine from pgvector...")
-        async with async_session_maker() as session:
-            await AIModels.faiss_engine.sync_from_db(session)
+        # 2. Initialize ML Models (P3-04)
+        logger.info("Initializing AI Models (RetinaFace, ArcFace, MiniFASNet)...")
+        await init_ai_models()
+        
+        # 3. Synchronize FAISS Vector Engine
+        try:
+            logger.info("Synchronizing FAISS vector engine from pgvector...")
+            async with async_session_maker() as session:
+                await AIModels.faiss_engine.sync_from_db(session)
+                
+                # Verify FAISS/pgvector consistency
+                from sqlalchemy import func, select
+                from app.models.face_embedding import FaceEmbedding
+                pg_result = await session.execute(select(func.count()).select_from(FaceEmbedding))
+                pg_count = pg_result.scalar() or 0
+                faiss_count = AIModels.faiss_engine.index.ntotal if AIModels.faiss_engine.index else 0
+                if faiss_count != pg_count:
+                    logger.warning(f"FAISS/pgvector mismatch: FAISS={faiss_count}, pgvector={pg_count}. Rebuilding...")
+                    await AIModels.faiss_engine.sync_from_db(session)
+                else:
+                    logger.info(f"FAISS ↔ pgvector consistent ({faiss_count} embeddings)")
+        except Exception as e:
+            logger.error(f"FAISS sync failed: {e}")
+            
+        yield
+    except asyncio.CancelledError:
+        logger.info("Server startup/shutdown cancelled gracefully.")
     except Exception as e:
-        logger.error(f"FAISS sync failed: {e}")
-    
-    yield
-    
-    # Shutdown
-    logger.info("Shutting down SmartLib Kiosk API...")
-    await close_db()
+        logger.error(f"Global server error: {e}", exc_info=True)
+        raise e
+    finally:
+        logger.info("SmartLib Kiosk Backend shutting down.")
+        await close_db()
     logger.info("Database connection closed")
 
 
@@ -91,7 +109,6 @@ app = FastAPI(
 ### Features:
 - 🔐 **Face Recognition**: Student authentication using ArcFace (512-dim embeddings)
 - 📚 **Book Detection**: Real-time book identification using YOLOv8
-- 📝 **OCR**: Text extraction from book covers using PaddleOCR
 - 🤖 **AI Assistant**: Intelligent chat assistant (Qwen 2.5) for book recommendations
 - 💳 **Transactions**: Automated book borrowing and returning
 - 📊 **Fine Management**: Automatic overdue fine calculation
@@ -167,9 +184,10 @@ async def health_check():
         "database": db_status,
         "environment": settings.app_env,
         "services": {
-            "face_recognition": "ready",
-            "book_detection": "ready",
-            "ocr": "ready"
+            "face_detector": "ready" if (AIModels.face_detector and AIModels.face_detector._initialized) else "not_ready",
+            "face_recognition": "ready" if (AIModels.face_recognizer and AIModels.face_recognizer._initialized) else "not_ready",
+            "anti_spoofing": "ready" if (AIModels.anti_spoofing and AIModels.anti_spoofing._initialized) else "not_ready",
+            "book_detection": "ready" if (AIModels.book_detector and AIModels.book_detector._initialized) else "not_ready"
         }
     }
 

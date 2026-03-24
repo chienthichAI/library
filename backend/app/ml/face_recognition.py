@@ -145,7 +145,9 @@ class FaceRecognizer:
                 logger.info(f"Loaded standalone ArcFace model from: {self.model_path}")
                 
             else:
-                logger.warning("No face recognition model available. Using mock mode.")
+                logger.error("No face recognition model available. Real model is required.")
+                self._initialized = False
+                return False
                 
             self._initialized = True
             return True
@@ -194,8 +196,12 @@ class FaceRecognizer:
                 aligned_face = self._apply_clahe(aligned_face)
                 embedding = self._run_onnx_inference(aligned_face)
             else:
-                aligned_face = self._apply_clahe(aligned_face)
-                embedding = self._mock_embedding(aligned_face)
+                logger.error("Face recognizer model unavailable during inference")
+                return FaceEmbeddingResult(
+                    embedding=np.zeros(self.embedding_dim, dtype=np.float32),
+                    confidence=0.0,
+                    is_valid=False
+                )
                 
             # L2 normalize properly
             norm = np.linalg.norm(embedding)
@@ -236,34 +242,8 @@ class FaceRecognizer:
             embedding = self._rec_model.get_feat(face)
             return embedding.flatten()
             
-        return self._mock_embedding(face)
-    
-    def _mock_embedding(self, face: np.ndarray) -> np.ndarray:
-        """
-        Generate mock embedding for testing.
-        Uses image features to create reproducible embeddings.
-        """
-        if face is None:
-            return np.zeros(self.embedding_dim, dtype=np.float32)
-            
-        # Create deterministic embedding from image
-        gray = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY) if len(face.shape) == 3 else face
-        resized = cv2.resize(gray, (16, 32))  # 512 pixels
-        
-        # Normalize to create embedding
-        embedding = resized.flatten().astype(np.float32)
-        # Safe normalization to avoid broadcasting errors
-        mean_val = np.mean(embedding)
-        std_val = np.std(embedding) + 1e-6
-        embedding = (embedding - mean_val) / std_val
-        
-        # Ensure 512 dimensions
-        if len(embedding) < self.embedding_dim:
-            embedding = np.pad(embedding, (0, self.embedding_dim - len(embedding)))
-        else:
-            embedding = embedding[:self.embedding_dim]
-            
-        return embedding
+        logger.error("InsightFace recognizer is unavailable")
+        return np.zeros(self.embedding_dim, dtype=np.float32)
     
     def compare_embeddings(
         self,

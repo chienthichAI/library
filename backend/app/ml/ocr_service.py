@@ -13,6 +13,7 @@ import cv2
 from typing import List, Optional, Tuple, Dict
 from dataclasses import dataclass
 from loguru import logger
+import re
 
 PADDLEOCR_AVAILABLE = False
 try:
@@ -108,34 +109,31 @@ class OCRService:
             
         try:
             if PADDLEOCR_AVAILABLE:
-                # Optimized for GPU if available, fallback to CPU
+                # PaddleOCR 3.x: GPU is managed globally via paddle.device.set_device.
+                # use_gpu / enable_mkldnn are no longer valid constructor args.
+                if self.use_gpu:
+                    try:
+                        import torch
+                        import paddle
+                        if torch.cuda.is_available():
+                            paddle.device.set_device('gpu:0')
+                            logger.info("PaddleOCR initializing on GPU")
+                        else:
+                            paddle.device.set_device('cpu')
+                            logger.info("PaddleOCR falling back to CPU (No CUDA)")
+                    except Exception:
+                        logger.info("PaddleOCR initializing on CPU")
+                else:
+                    logger.info("PaddleOCR initializing on CPU (use_gpu=False)")
+
                 kwargs = {
                     "lang": self.lang,
-                    "det_limit_side_len": 480, # Increased resolution for GPU
-                    "use_angle_cls": False
                 }
-                
-                if self.use_gpu:
-                    import torch
-                    if torch.cuda.is_available():
-                        # PaddleOCR 3.x with Paddle 3.x handles device globally
-                        import paddle
-                        paddle.device.set_device('gpu:0')
-                        kwargs["use_gpu"] = True
-                        kwargs["enable_mkldnn"] = False
-                        logger.info("PaddleOCR initializing on GPU")
-                    else:
-                        kwargs["use_gpu"] = False
-                        kwargs["enable_mkldnn"] = True
-                        logger.info("PaddleOCR falling back to CPU (No CUDA)")
-                else:
-                    kwargs["use_gpu"] = False
-                    kwargs["enable_mkldnn"] = True
-                
                 self._ocr = PaddleOCR(**kwargs)
-                logger.info(f"PaddleOCR initialized (GPU={kwargs.get('use_gpu', False)})")
+                logger.info("PaddleOCR initialized")
             else:
-                logger.warning("PaddleOCR not available. Using mock mode.")
+                logger.error("PaddleOCR dependency is missing. OCR cannot run without real model.")
+                return False
                 
             self._initialized = True
             return True
@@ -166,10 +164,10 @@ class OCRService:
             return []
             
         try:
-            if self._ocr is not None:
-                return self._run_paddleocr(image, min_confidence)
-            else:
-                return self._mock_ocr(image)
+            if self._ocr is None:
+                logger.error("OCR model unavailable during inference")
+                return []
+            return self._run_paddleocr(image, min_confidence)
                 
         except Exception as e:
             logger.error(f"OCR extraction failed: {e}")
@@ -236,12 +234,6 @@ class OCRService:
         except Exception as e:
             logger.error(f"Internal PaddleOCR error: {e}")
             return []
-    
-    def _mock_ocr(self, image: np.ndarray) -> List[OCRResult]:
-        """Mock OCR for testing without PaddleOCR."""
-        # Return empty or simulated results
-        logger.debug("Using mock OCR")
-        return []
     
     def extract_book_info(
         self,
@@ -319,7 +311,7 @@ class OCRService:
                 break
                 
         # ISBN pattern matching
-        import re
+
         isbn_pattern = r'(?:ISBN[:\s-]*)?(\d{3}[-\s]?\d[-\s]?\d{3}[-\s]?\d{5}[-\s]?\d)'
         for t in all_text:
             match = re.search(isbn_pattern, t.text)

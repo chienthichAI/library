@@ -41,7 +41,7 @@ def extract_rppg_signal(frames: list, face_bbox: tuple) -> float:
     Returns: liveness score 0-1 based on rPPG heart rate signal extraction.
     """
     if not SCIPY_AVAILABLE or len(frames) < 10:
-        return 1.0  # Fail-open if not enough frames or missing scipy
+        return 0.5  # Neutral fallback when temporal signal is unavailable
 
     green_channel_means = []
     x1, y1, x2, y2 = face_bbox
@@ -69,7 +69,7 @@ def extract_rppg_signal(frames: list, face_bbox: tuple) -> float:
         green_channel_means.append(g_mean)
         
     if len(green_channel_means) < 10:
-        return 1.0
+        return 0.5
         
     signal = np.array(green_channel_means)
     signal = signal - np.mean(signal)  # Detrend
@@ -98,14 +98,14 @@ def extract_rppg_signal(frames: list, face_bbox: tuple) -> float:
         return liveness_score
     except Exception as e:
         logger.warning(f"rPPG filtering error: {e}")
-        return 1.0
+        return 0.5
 
 def detect_screen_flicker(frames: list, face_bbox: tuple) -> float:
     """
     Detect screen refresh flicker via temporal FFT.
     """
     if len(frames) < 10:
-        return 1.0
+        return 0.5
         
     means = []
     x1, y1, x2, y2 = face_bbox
@@ -121,7 +121,7 @@ def detect_screen_flicker(frames: list, face_bbox: tuple) -> float:
             means.append(np.mean(roi))
             
     if len(means) < 10:
-        return 1.0
+        return 0.5
         
     signal = np.array(means)
     signal = signal - np.mean(signal)
@@ -130,7 +130,7 @@ def detect_screen_flicker(frames: list, face_bbox: tuple) -> float:
     fft_vals = np.abs(np.fft.rfft(signal))
     
     if len(fft_vals) <= 1:
-        return 1.0
+        return 0.5
     
     max_energy = np.max(fft_vals[1:])
     # For a short 15-frame window (0.5s), frequencies are very coarse.
@@ -212,13 +212,10 @@ class AntiSpoofing:
                 self._session = ort.InferenceSession(self.model_path, providers=providers)
                 logger.info(f"Loaded anti-spoofing model from: {self.model_path}")
             else:
-                import os
-                if os.getenv("ALLOW_HEURISTIC_SPOOF", "false").lower() != "true":
-                    raise FileNotFoundError(
-                        f"Anti-spoofing model không tìm thấy tại {self.model_path}. "
-                        "Không thể khởi động kiosk mà không có bảo vệ liveness. (Set ALLOW_HEURISTIC_SPOOF=true to override)"
-                    )
-                logger.warning("Anti-spoofing model not available. Using heuristic detection.")
+                raise FileNotFoundError(
+                    f"Anti-spoofing model không tìm thấy tại {self.model_path}. "
+                    "Hệ thống yêu cầu model anti-spoofing thật và không cho phép fallback heuristic."
+                )
                 
             self._initialized = True
             return True
@@ -248,8 +245,8 @@ class AntiSpoofing:
                 # Use ONNX model
                 return self._run_model_inference(face_image)
             else:
-                # Use heuristic-based detection
-                return self._heuristic_detection(face_image)
+                logger.error("Anti-spoofing model unavailable during inference")
+                return AntiSpoofingResult(is_real=False, confidence=0.0, spoof_type="model_unavailable")
                 
         except Exception as e:
             logger.error(f"Anti-spoofing detection failed: {e}")

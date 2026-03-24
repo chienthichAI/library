@@ -1,0 +1,11 @@
+image1,image2,is_same
+img1_0.jpg,img2_0.jpg,1
+img1_1.jpg,img2_1.jpg,1
+img1_2.jpg,img2_2.jpg,1
+img1_3.jpg,img2_3.jpg,1
+img1_4.jpg,img2_4.jpg,1
+img1_5.jpg,img2_5.jpg,0
+img1_6.jpg,img2_6.jpg,0
+img1_7.jpg,img2_7.jpg,0
+img1_8.jpg,img2_8.jpg,0
+img1_9.jpg,img2_9.jpg,0
