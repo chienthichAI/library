@@ -88,66 +88,34 @@ class BarcodeReader:
         
         for processed in preprocessed_images:
             try:
-                # 1. Detect 1D Barcodes
-                if self.barcode_detector:
-                    retval, decoded_info, decoded_type, points = self.barcode_detector.detectAndDecode(processed)
-                    if retval and decoded_info:
-                        # OpenCV returns lists of lists sometimes depending on the version
-                        if not isinstance(decoded_info, (list, tuple)):
-                            decoded_info = [decoded_info]
-                            decoded_type = [decoded_type] if decoded_type else ["UNKNOWN"]
-                            points = [points] if points is not None else [None]
-                            
-                        for i, info in enumerate(decoded_info):
-                            if not info:
-                                continue
-                            
-                            b_type = str(decoded_type[i]) if i < len(decoded_type) else "EAN13"
-                            if b_type == '0':
-                                b_type = "EAN13"
-                            
-                            pts = points[i] if points is not None and i < len(points) else None
-                            bbox = (0, 0, 0, 0)
-                            if pts is not None and len(pts) > 0:
-                                # OpenCV points are usually [[x,y], [x,y]...]
-                                pts_array = np.array(pts).reshape(-1, 2)
-                                x, y, w, h = cv2.boundingRect(np.float32(pts_array))
-                                bbox = (int(x), int(y), int(w), int(h))
-                                
-                            confidence = 0.85
-                            
-                            result = BarcodeResult(
-                                data=info,
-                                barcode_type=b_type,
-                                bbox=bbox,
-                                confidence=confidence
-                            )
-                            if not any(r.data == info for r in results):
-                                results.append(result)
-
-                # 2. Detect 2D QR Codes
-                retval, decoded_info, points, _ = self.qr_detector.detectAndDecodeMulti(processed)
-                if retval and decoded_info:
-                    for i, info in enumerate(decoded_info):
-                        if not info:
-                            continue
-                            
-                        pts = points[i] if points is not None and i < len(points) else None
-                        bbox = (0, 0, 0, 0)
-                        if pts is not None and len(pts) > 0:
-                            pts_array = np.array(pts).reshape(-1, 2)
-                            x, y, w, h = cv2.boundingRect(np.float32(pts_array))
-                            bbox = (int(x), int(y), int(w), int(h))
-                            
-                        result = BarcodeResult(
-                            data=info,
-                            barcode_type="QRCODE",
-                            bbox=bbox,
-                            confidence=0.9
-                        )
-                        if not any(r.data == info for r in results):
-                            results.append(result)
-                            
+                barcodes = pyzbar.decode(
+                    processed,
+                    symbols=self._symbol_types
+                )
+                
+                for barcode in barcodes:
+                    # Extract data
+                    data = barcode.data.decode('utf-8', errors='ignore')
+                    barcode_type = barcode.type
+                    
+                    # Get bounding box
+                    rect = barcode.rect
+                    bbox = (rect.left, rect.top, rect.width, rect.height)
+                    
+                    # Calculate confidence based on quality
+                    confidence = self._calculate_confidence(barcode, processed)
+                    
+                    result = BarcodeResult(
+                        data=data,
+                        barcode_type=barcode_type,
+                        bbox=bbox,
+                        confidence=confidence
+                    )
+                    
+                    # Avoid duplicates
+                    if not any(r.data == data for r in results):
+                        results.append(result)
+                        
             except Exception as e:
                 logger.debug(f"Barcode decode error: {e}")
                 continue

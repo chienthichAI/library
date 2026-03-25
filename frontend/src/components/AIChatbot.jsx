@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
-import { chatApi } from '../services/chatbotApi';
+import React, { useState, useRef, useEffect } from 'react';
+import axios from 'axios';
+import { API_URL } from '../config';
 import './AIChatbot.css';
 
 const AIChatbot = () => {
+    const navigate = useNavigate();
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([
         {

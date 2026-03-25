@@ -34,6 +34,8 @@ class DetectedFace:
     landmarks: Optional[np.ndarray] = None  # 5 facial landmarks
     aligned_face: Optional[np.ndarray] = None  # 112x112 aligned face
     embedding: Optional[np.ndarray] = None  # 512-dim embedding
+    track_id: Optional[int] = None
+    pose: Optional[Dict[str, float]] = None
     
     @property
     def x1(self) -> int:
@@ -100,6 +102,7 @@ class FaceDetector:
         self.use_gpu = use_gpu
         self._model = None
         self._initialized = False
+        self.tracker = None
         
     def initialize(self) -> bool:
         """
@@ -112,9 +115,9 @@ class FaceDetector:
             return True
             
         if not INSIGHTFACE_AVAILABLE:
-            logger.warning("InsightFace not available. Using mock mode.")
-            self._initialized = True
-            return True
+            logger.error("InsightFace dependency is missing. Face detector cannot run without real model.")
+            self._initialized = False
+            return False
             
         try:
             from pathlib import Path
@@ -139,6 +142,18 @@ class FaceDetector:
                 det_size=self.det_size,
                 det_thresh=self.det_thresh
             )
+            
+            try:
+                from norfair import Tracker
+                self.tracker = Tracker(
+                    distance_function="euclidean",
+                    distance_threshold=100,
+                    initialization_delay=2,
+                    hit_counter_max=10
+                )
+            except (ImportError, TypeError) as tracker_err:
+                logger.warning(f"Norfair tracker not available or incompatible: {tracker_err}. Face tracking disabled.")
+                self.tracker = None
             
             self._initialized = True
             logger.info(f"Face detector initialized: {self.model_name}")
@@ -174,19 +189,23 @@ class FaceDetector:
             image_rgb = image
             
         if not INSIGHTFACE_AVAILABLE or self._model is None:
-            # Mock detection for testing (expects RGB)
-            return self._mock_detect(image_rgb)
+            logger.error("Face detector model is not initialized. Detection aborted.")
+            return []
             
         try:
+            import time
+            t0 = time.time()
             # Run detection ONLY or full pipeline
             if extract_embedding:
                 faces = self._model.get(image_rgb)
+                logger.debug(f"InsightFace full pipeline took {(time.time() - t0)*1000:.2f}ms")
             else:
                 det_model = self._model.models.get('detection')
                 if det_model is None:
                     faces = self._model.get(image_rgb)
                 else:
                     bboxes, kpss = det_model.detect(image_rgb)
+                    logger.debug(f"InsightFace detection-only took {(time.time() - t0)*1000:.2f}ms")
                     faces = []
                     # bboxes shape is (N, 5), kpss is (N, 5, 2)
                     if bboxes is not None and bboxes.shape[0] > 0:
@@ -214,12 +233,15 @@ class FaceDetector:
                 normed_emb = getattr(face, 'normed_embedding', None)
                 emb = getattr(face, 'embedding', None)
                 
+                pose = FaceDetector._estimate_pose(kps) if kps is not None else None
+                
                 detected = DetectedFace(
                     bbox=tuple(face.bbox.astype(int)),
                     confidence=float(face.det_score),
                     landmarks=kps,
                     aligned_face=self._align_face(image_rgb, face) if kps is not None else None,
-                    embedding=normed_emb if normed_emb is not None else emb
+                    embedding=normed_emb if normed_emb is not None else emb,
+                    pose=pose
                 )
                 detected_faces.append(detected)
                 
@@ -228,6 +250,23 @@ class FaceDetector:
         except Exception as e:
             logger.error(f"Face detection failed: {e}")
             return []
+
+    @staticmethod
+    def _estimate_pose(landmarks: np.ndarray) -> Dict[str, float]:
+        """Estimate yaw, pitch roughly from 5 landmarks."""
+        if landmarks is None or len(landmarks) < 5:
+            return {"yaw": 0.0, "pitch": 0.0}
+        le, re, nose, lm, rm = landmarks
+        ec = (le + re) / 2.0
+        mc = (lm + rm) / 2.0
+        face_width = max(np.linalg.norm(le - re), 1e-5)
+        nose_dist_from_center_x = nose[0] - ((ec[0] + mc[0]) / 2.0)
+        yaw = (nose_dist_from_center_x / face_width) * 90.0
+        
+        face_height = max(np.linalg.norm(ec - mc), 1e-5)
+        nose_dist_from_center_y = nose[1] - ((ec[1] + mc[1]) / 2.0)
+        pitch = (nose_dist_from_center_y / face_height) * 90.0
+        return {"yaw": yaw, "pitch": pitch}
     
     def _align_face(
         self, 
@@ -275,43 +314,43 @@ class FaceDetector:
         except Exception as e:
             logger.error(f"Face alignment failed: {e}")
             return None
-    
-    def _mock_detect(self, image: np.ndarray) -> List[DetectedFace]:
-        """
-        Mock face detection for testing without InsightFace.
-        Uses OpenCV Haar Cascade as fallback.
-        """
-        try:
-            # Use OpenCV Haar Cascade as fallback
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+
+    def track(self, image: np.ndarray, max_faces: int = 1, extract_embedding: bool = True) -> List[DetectedFace]:
+        """Detect and track faces consistently across frames with smoothing."""
+        detections = self.detect(image, max_faces=10, extract_embedding=extract_embedding)
+        
+        if self.tracker is None:
+            if max_faces > 0:
+                detections = sorted(detections, key=lambda x: x.confidence, reverse=True)[:max_faces]
+            return detections
             
-            face_cascade = cv2.CascadeClassifier(
-                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-            )
+        from norfair import Detection
+        norfair_detections = []
+        for det in detections:
+            # Quality filter before tracking
+            if det.pose is not None:
+                if abs(det.pose['yaw']) > 45.0 or abs(det.pose['pitch']) > 45.0:
+                    continue # Skip highly angled faces
+                    
+            points = np.array([[det.x1, det.y1], [det.x2, det.y2]])
+            norfair_detections.append(Detection(points=points, data=det))
             
-            faces = face_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=5,
-                minSize=(60, 60)
-            )
-            
-            detected_faces = []
-            for (x, y, w, h) in faces:
-                # Use a dummy confidence for test so they aren't all exactly 0.85
-                detected = DetectedFace(
-                    bbox=(x, y, x + w, y + h),
-                    confidence=0.0,
-                    landmarks=None,
-                    aligned_face=cv2.resize(image[y:y+h, x:x+w], (112, 112))
-                )
-                detected_faces.append(detected)
+        tracked_objects = self.tracker.update(detections=norfair_detections)
+        
+        tracked_faces = []
+        for obj in tracked_objects:
+            if obj.last_detection is not None:
+                face = obj.last_detection.data
+                # Update bbox with Kalman-smoothed estimate
+                pts = obj.estimate
+                face.bbox = (int(pts[0][0]), int(pts[0][1]), int(pts[1][0]), int(pts[1][1]))
+                face.track_id = int(obj.id)
+                tracked_faces.append(face)
                 
-            return detected_faces
+        if max_faces > 0:
+            tracked_faces = sorted(tracked_faces, key=lambda x: x.confidence, reverse=True)[:max_faces]
             
-        except Exception as e:
-            logger.error(f"Mock face detection failed: {e}")
-            return []
+        return tracked_faces
     
     def draw_detections(
         self, 
@@ -344,11 +383,15 @@ class FaceDetector:
                 thickness
             )
             
-            # Draw confidence
-            label = f"{face.confidence:.2f}"
+            # Draw confidence and tracking ID
+            label = f"ID:{face.track_id}" if face.track_id is not None else ""
+            label += f" {face.confidence:.2f}"
+            if face.pose is not None:
+                label += f" Y:{face.pose['yaw']:.0f} P:{face.pose['pitch']:.0f}"
+                
             cv2.putText(
                 result,
-                label,
+                label.strip(),
                 (face.x1, face.y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,

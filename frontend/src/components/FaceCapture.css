@@ -31,6 +31,7 @@
     margin: 0 0 6px;
     background: linear-gradient(135deg, #e8f0fe, #00e5ff);
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -89,8 +90,6 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
-    transform: scaleX(-1);
-    /* Mirror cùng video */
 }
 
 /* ===== OVAL GUIDE ===== */
@@ -511,3 +510,84 @@
 .fc-hint strong {
     color: #8899aa;
 }
+
+/* ===== TRACKER BADGE ===== */
+.fc-tracker-badge {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 99px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+    transition: background 0.4s ease, border-color 0.4s ease, color 0.4s ease;
+    z-index: 10;
+    pointer-events: none;
+}
+
+.fc-tracker-badge.tracking {
+    background: rgba(0, 229, 255, 0.12);
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    color: #00e5ff;
+    animation: badge-appear 0.3s ease;
+}
+
+.fc-tracker-badge.searching {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #778899;
+    animation: badge-breathe 2.2s ease-in-out infinite;
+}
+
+/* Pulsing dot */
+.fc-tracker-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    transition: background 0.4s;
+}
+
+.fc-tracker-badge.tracking .fc-tracker-dot {
+    background: #00e5ff;
+    box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.6);
+    animation: dot-ping 1.4s ease-in-out infinite;
+}
+
+.fc-tracker-badge.searching .fc-tracker-dot {
+    background: #556677;
+}
+
+/* Multi-face warning */
+.fc-multi-face-badge {
+    margin-left: 4px;
+    padding: 1px 8px;
+    border-radius: 99px;
+    background: rgba(255, 200, 0, 0.15);
+    border: 1px solid rgba(255, 200, 0, 0.35);
+    color: #ffc400;
+    font-size: 10px;
+    font-weight: 700;
+}
+
+@keyframes badge-appear {
+    from { opacity: 0; transform: translateY(-4px) scale(0.95); }
+    to   { opacity: 1; transform: translateY(0)   scale(1); }
+}
+
+@keyframes badge-breathe {
+    0%, 100% { opacity: 0.55; }
+    50%       { opacity: 1; }
+}
+
+@keyframes dot-ping {
+    0%   { box-shadow: 0 0 0 0   rgba(0, 229, 255, 0.7); }
+    70%  { box-shadow: 0 0 0 7px rgba(0, 229, 255, 0); }
+    100% { box-shadow: 0 0 0 0   rgba(0, 229, 255, 0); }
+}

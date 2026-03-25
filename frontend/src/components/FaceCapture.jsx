@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { FilesetResolver, FaceDetector } from '@mediapipe/tasks-vision'
+import { API_URL } from '../config'
 import './FaceCapture.css'
 
 const FACE_POSITIONS = [
@@ -7,7 +9,6 @@ const FACE_POSITIONS = [
     { id: 'right', label: 'Nghiêng phải', instruction: 'Xoay mặt sang phải khoảng 15 độ' }
 ]
 
-const API_URL = 'http://localhost:8000/api/v1'
 const AUTO_CAPTURE_DELAY = 2000
 const AUTO_CAPTURE_MIN_QUALITY = 0.6
 const CHECK_INTERVAL = 800
@@ -17,10 +18,17 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
     const canvasRef = useRef(null)
     const overlayRef = useRef(null) // Canvas để vẽ bbox
     const streamRef = useRef(null)
+    const smoothedBboxRef = useRef(null)
     const autoCaptureTimerRef = useRef(null)
-    const progressIntervalRef = useRef(null) // Fix memory leak
-    const captureImageRef = useRef(null) // Fix stale closure
-    const isCheckingRef = useRef(false) // Fix race condition
+    const progressIntervalRef = useRef(null) 
+    const captureImageRef = useRef(null) 
+    const isCheckingRef = useRef(false) 
+    const rafRef = useRef(null) 
+    
+    // WebSockets & MediaPipe refs
+    const faceDetectorRef = useRef(null)
+    const wsRef = useRef(null)
+    const lastFrameTimeRef = useRef(0)
 
     const [isStreaming, setIsStreaming] = useState(false)
     const [currentPosition, setCurrentPosition] = useState(0)
@@ -33,21 +41,98 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
     const [autoCaptureProgress, setAutoCaptureProgress] = useState(0)
     const [cooldown, setCooldown] = useState(false)
     const [detectedFaces, setDetectedFaces] = useState([]) // Bbox data từ API
+    const [trackingStatus, setTrackingStatus] = useState('searching') // 'searching' | 'tracking'
 
     // --- Camera ---
     useEffect(() => {
-        startCamera()
+        initFaceDetector().then(() => {
+            connectWebSocket()
+            startCamera()
+        })
         return () => {
             stopCamera()
             clearTimeout(autoCaptureTimerRef.current)
             clearInterval(progressIntervalRef.current)
-            // Revoke object URLs (fix memory leak)
+            if (wsRef.current) wsRef.current.close()
+            if (rafRef.current) cancelAnimationFrame(rafRef.current)
+            // Revoke object URLs
             setCapturedImages(prev => {
                 prev.forEach(img => URL.revokeObjectURL(img.url))
                 return prev
             })
         }
     }, [])
+    
+    const initFaceDetector = async () => {
+        try {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            )
+            faceDetectorRef.current = await FaceDetector.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+                    delegate: "GPU" // Offload scanning to GPU for high perf
+                },
+                runningMode: "VIDEO"
+            })
+        } catch (err) {
+            console.error("Failed to init FaceDetector:", err)
+        }
+    }
+
+    const connectWebSocket = () => {
+        const wsUrl = API_URL.replace(/^http/, 'ws') + '/auth/ws/stream'
+        const ws = new WebSocket(wsUrl)
+        wsRef.current = ws
+        
+        ws.onmessage = (event) => {
+            isCheckingRef.current = false
+            let result
+            try {
+                result = JSON.parse(event.data)
+            } catch (err) {
+                console.warn('Invalid WebSocket payload:', err)
+                return
+            }
+            
+            setQualityScore(result.quality_score)
+            setQualityIssues(result.quality_issues || [])
+            
+            // Wait until components are ready
+            if (countdown !== null || cooldown) return;
+            
+            const isFaceMissingError = result.error_message?.toLowerCase().includes('khuôn mặt')
+            const isValid = result.quality_score >= AUTO_CAPTURE_MIN_QUALITY && (!result.quality_issues || result.quality_issues.length === 0) && !isFaceMissingError
+            
+            if (isValid) {
+                setFaceStatus('valid')
+                setStatusMessage('✓ Giữ nguyên! Đang tự động chụp...')
+                if (!autoCaptureTimerRef.current) {
+                    setAutoCaptureProgress(0)
+                    let progress = 0
+                    progressIntervalRef.current = setInterval(() => {
+                        progress += 10
+                        setAutoCaptureProgress(progress)
+                        if (progress >= 100) clearInterval(progressIntervalRef.current)
+                    }, AUTO_CAPTURE_DELAY / 10)
+
+                    autoCaptureTimerRef.current = setTimeout(() => {
+                        clearInterval(progressIntervalRef.current)
+                        setAutoCaptureProgress(100)
+                        triggerAutoCapture()
+                        autoCaptureTimerRef.current = null
+                    }, AUTO_CAPTURE_DELAY)
+                }
+            } else {
+                setFaceStatus('invalid')
+                setStatusMessage(result.error_message || 'Điều chỉnh vị trí khuôn mặt')
+                clearTimeout(autoCaptureTimerRef.current)
+                clearInterval(progressIntervalRef.current)
+                autoCaptureTimerRef.current = null
+                setAutoCaptureProgress(0)
+            }
+        }
+    }
 
     const startCamera = async () => {
         try {
@@ -73,61 +158,117 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
     }
 
     // --- Vẽ bbox lên overlay canvas ---
-    const drawFaceBoxes = useCallback((faces, videoW, videoH) => {
+    const drawFaceBoxes = useCallback((detections) => {
         const overlay = overlayRef.current
-        if (!overlay) return
-        overlay.width = videoW
-        overlay.height = videoH
+        const video = videoRef.current
+        if (!overlay || !video) return
+
+        // Sync overlay size with video display size
+        const displayWidth = video.clientWidth
+        const displayHeight = video.clientHeight
+        if (overlay.width !== displayWidth || overlay.height !== displayHeight) {
+            overlay.width = displayWidth
+            overlay.height = displayHeight
+        }
+
         const ctx = overlay.getContext('2d')
-        ctx.clearRect(0, 0, videoW, videoH)
+        ctx.clearRect(0, 0, overlay.width, overlay.height)
 
-        faces.forEach((face, idx) => {
-            const { x1, y1, x2, y2, is_primary, confidence } = face
-            const isPrimary = is_primary || idx === 0
+        const scaleX = overlay.width / video.videoWidth
+        const scaleY = overlay.height / video.videoHeight
 
-            // Màu theo primary/secondary
-            const color = isPrimary ? '#00e5ff' : 'rgba(255,255,255,0.4)'
-            const glowColor = isPrimary ? 'rgba(0,229,255,0.6)' : 'rgba(255,255,255,0.2)'
+        detections.forEach((det, idx) => {
+            const isPrimary = idx === 0
+            if (!isPrimary) return
 
-            // Glow shadow
-            ctx.shadowColor = glowColor
-            ctx.shadowBlur = isPrimary ? 16 : 6
+            const confidence = det.categories[0].score
+            const { originX, width, originY, height } = det.boundingBox
 
-            // Vẽ góc thay vì full rect (đẹp hơn)
-            const cornerLen = Math.min((x2 - x1), (y2 - y1)) * 0.22
-            const lw = isPrimary ? 3 : 1.5
-            ctx.strokeStyle = color
-            ctx.lineWidth = lw
-            ctx.lineCap = 'round'
+            // 1. Calculate Target Mirrored Coords
+            const targetX1 = overlay.width - ((originX + width) * scaleX)
+            const targetY1 = originY * scaleY
+            const targetW = width * scaleX
+            const targetH = height * scaleY
 
-            // Top-left
-            ctx.beginPath(); ctx.moveTo(x1, y1 + cornerLen); ctx.lineTo(x1, y1); ctx.lineTo(x1 + cornerLen, y1); ctx.stroke()
-            // Top-right
-            ctx.beginPath(); ctx.moveTo(x2 - cornerLen, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + cornerLen); ctx.stroke()
-            // Bottom-left
-            ctx.beginPath(); ctx.moveTo(x1, y2 - cornerLen); ctx.lineTo(x1, y2); ctx.lineTo(x1 + cornerLen, y2); ctx.stroke()
-            // Bottom-right
-            ctx.beginPath(); ctx.moveTo(x2 - cornerLen, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2 - cornerLen, y2); ctx.stroke()
-
-            // Label confidence
-            ctx.shadowBlur = 0
-            if (isPrimary) {
-                const label = `✓ Chính  ${Math.round(confidence * 100)}%`
-                ctx.font = 'bold 13px Inter, sans-serif'
-                ctx.fillStyle = '#00e5ff'
-                const tw = ctx.measureText(label).width
-                ctx.fillStyle = 'rgba(0,0,0,0.65)'
-                ctx.fillRect(x1, y1 - 26, tw + 12, 22)
-                ctx.fillStyle = '#00e5ff'
-                ctx.fillText(label, x1 + 6, y1 - 9)
+            // 2. Smooth the Bounding Box (LERP)
+            if (!smoothedBboxRef.current) {
+                smoothedBboxRef.current = { x: targetX1, y: targetY1, w: targetW, h: targetH }
             } else {
-                const label = `${Math.round(confidence * 100)}%`
-                ctx.font = '11px Inter, sans-serif'
-                ctx.fillStyle = 'rgba(255,255,255,0.6)'
-                ctx.fillText(label, x1 + 4, y1 - 6)
+                const lerp = 0.25
+                smoothedBboxRef.current.x += (targetX1 - smoothedBboxRef.current.x) * lerp
+                smoothedBboxRef.current.y += (targetY1 - smoothedBboxRef.current.y) * lerp
+                smoothedBboxRef.current.w += (targetW - smoothedBboxRef.current.w) * lerp
+                smoothedBboxRef.current.h += (targetH - smoothedBboxRef.current.h) * lerp
             }
+
+            const { x, y, w, h } = smoothedBboxRef.current
+            const x2 = x + w
+            const y2 = y + h
+
+            const color = '#00e5ff'
+            const glowColor = 'rgba(0,229,255,0.4)'
+            const now = Date.now() / 1000
+
+            const centerX = x + w/2
+            const centerY = y + h/2
+            
+            // --- DRAW HUD BRACKETS ---
+            ctx.save()
+            
+            // Subtle Background fill
+            ctx.fillStyle = 'rgba(0, 229, 255, 0.05)'
+            ctx.fillRect(x, y, w, h)
+
+            // Inner Corner Highlights
+            ctx.shadowColor = color
+            ctx.shadowBlur = 10
+            ctx.strokeStyle = color
+            ctx.lineWidth = 3
+            ctx.lineCap = 'butt'
+
+            const brSize = w * 0.15 // Bracket size
+            // Corners
+            ctx.beginPath(); ctx.moveTo(x, y + brSize); ctx.lineTo(x, y); ctx.lineTo(x + brSize, y); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(x2 - brSize, y); ctx.lineTo(x2, y); ctx.lineTo(x2, y + brSize); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(x, y2 - brSize); ctx.lineTo(x, y2); ctx.lineTo(x + brSize, y2); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(x2 - brSize, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - brSize); ctx.stroke()
+
+            // Side Ticks
+            ctx.lineWidth = 1
+            ctx.beginPath(); ctx.moveTo(x - 5, centerY); ctx.lineTo(x + 5, centerY); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(x2 - 5, centerY); ctx.lineTo(x2 + 5, centerY); ctx.stroke()
+
+            ctx.restore()
+
+            // --- DATA READOUTS ---
+            const fontSize = 11
+            ctx.font = `${fontSize}px "JetBrains Mono", "Courier New", monospace`
+            ctx.fillStyle = color
+            
+            ctx.fillText(`STATUS: ANALYZING`, x, y - 12)
+            
+            const metrics = [
+                `VALIDITY: ${faceStatus.toUpperCase()}`,
+                `CONF: ${Math.round(confidence * 100)}%`,
+                `LOC: [${Math.round(x)},${Math.round(y)}]`
+            ]
+            
+            metrics.forEach((m, i) => {
+                ctx.fillStyle = 'rgba(0,229,255,0.8)'
+                ctx.fillText(m, x2 + 10, y + (i * (fontSize + 6)) + 15)
+            })
+
+            // Scanning Line
+            const scanPos = (Math.sin(now * 3) + 1) / 2
+            const scanY = y + (h * scanPos)
+            const grad = ctx.createLinearGradient(x, scanY, x2, scanY)
+            grad.addColorStop(0, 'transparent')
+            grad.addColorStop(0.5, 'rgba(0,229,255,0.3)')
+            grad.addColorStop(1, 'transparent')
+            ctx.fillStyle = grad
+            ctx.fillRect(x, scanY - 1, w, 2)
         })
-    }, [])
+    }, [faceStatus])
 
     // --- Quality check + face detection ---
     const checkQuality = useCallback(async () => {
@@ -136,12 +277,12 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
 
         const video = videoRef.current
         const canvas = canvasRef.current
-        
-        // Scale down to 640x360 for faster processing
-        canvas.width = 640
-        canvas.height = 360
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
         const ctx = canvas.getContext('2d')
-        ctx.drawImage(video, 0, 0, 640, 360)
+        ctx.translate(canvas.width, 0)
+        ctx.scale(-1, 1)
+        ctx.drawImage(video, 0, 0)
 
         isCheckingRef.current = true
 
@@ -161,7 +302,7 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
                     // Vẽ bbox nếu API trả về faces
                     if (result.faces && result.faces.length > 0) {
                         setDetectedFaces(result.faces)
-                        drawFaceBoxes(result.faces, canvas.width, canvas.height)
+                        drawFaceBoxes(result.faces, video.videoWidth, video.videoHeight)
                     } else {
                         setDetectedFaces([])
                         const overlay = overlayRef.current
@@ -214,10 +355,13 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
     }, [isStreaming, countdown, cooldown, drawFaceBoxes])
 
     useEffect(() => {
-        if (!isStreaming) return
-        const interval = setInterval(checkQuality, CHECK_INTERVAL)
-        return () => clearInterval(interval)
-    }, [isStreaming, checkQuality])
+        if (isStreaming) {
+            rafRef.current = requestAnimationFrame(trackingLoop)
+        }
+        return () => {
+            if (rafRef.current) cancelAnimationFrame(rafRef.current)
+        }
+    }, [isStreaming, trackingLoop])
 
     // --- Capture ---
     const captureImage = useCallback(() => {
@@ -254,6 +398,8 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
                 setFaceStatus('waiting')
                 setCountdown(null)
                 setDetectedFaces([])
+                // Reset tracker state for the new position
+                setTrackingStatus('searching')
                 setCooldown(true)
                 setStatusMessage(`Chuẩn bị: ${FACE_POSITIONS[nextPos]?.instruction}`)
                 setTimeout(() => {
@@ -321,11 +467,26 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
                 {/* Bbox overlay */}
                 <canvas ref={overlayRef} className="fc-overlay" />
 
-                {/* Oval guide */}
-                <div className="fc-oval-guide">
-                    <div className="fc-oval-ring" />
-                    <div className="fc-scan-line" />
+                {/* Tracking status badge */}
+                <div className={`fc-tracker-badge ${trackingStatus}`}>
+                    {trackingStatus === 'tracking' ? (
+                        <>
+                            <span className="fc-tracker-dot" />
+                            <span>Đang theo dõi</span>
+                            {detectedFaces.length > 1 && (
+                                <span className="fc-multi-face-badge">👥 {detectedFaces.length} mặt</span>
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            <span className="fc-tracker-dot" />
+                            <span>Đang tìm...</span>
+                        </>
+                    )}
                 </div>
+
+                {/* Removed fc-oval-guide as requested */}
+
 
                 {/* Countdown */}
                 {countdown && (

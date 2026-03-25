@@ -4,6 +4,7 @@ SmartLib Kiosk - Test Configuration
 Pytest fixtures and configuration for testing.
 """
 import pytest
+import pytest_asyncio
 import asyncio
 from typing import AsyncGenerator, Generator
 from httpx import AsyncClient, ASGITransport
@@ -38,7 +39,7 @@ def event_loop() -> Generator:
 # HTTP Client Fixtures
 # ============================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def async_client() -> AsyncGenerator[AsyncClient, None]:
     """Create async HTTP client for API testing."""
     transport = ASGITransport(app=app)
@@ -50,7 +51,7 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
 # Database Fixtures
 # ============================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db_session():
     """Create a database session for testing."""
     async with async_session_maker() as session:

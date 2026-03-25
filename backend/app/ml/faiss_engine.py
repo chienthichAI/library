@@ -9,7 +9,7 @@ import faiss
 import numpy as np
 import asyncio
 import threading
-from typing import List, Tuple, Dict, Optional
+from typing import List, Tuple, Dict, Optional, Any
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -27,10 +27,10 @@ class FaissEngine:
         # IndexFlatIP uses Inner Product (equivalent to Cosine Similarity if vectors are L2-normalized)
         self.index = faiss.IndexFlatIP(embedding_dim)
         
-        # Mapping from FAISS internal integer ID to database string ID
-        self.id_map: Dict[int, int] = {}  # faiss_id -> embedding_id
-        self.embedding_to_student: Dict[int, str] = {} # embedding_id -> student_id
-        self.student_to_embeddings: Dict[str, List[int]] = {} # student_id -> [faiss_id, ...]
+        # Mapping from FAISS internal integer ID to student string ID
+        self.id_map: Dict[int, str] = {}  # faiss_idx -> student_id
+        # Metadata cache for fast retrieval (P4-04)
+        self.metadata_cache: Dict[str, Dict[str, str]] = {} # student_id -> {"full_name": str, "role": str}
         
         self.current_idx = 0
         self.is_ready = False
@@ -42,9 +42,9 @@ class FaissEngine:
         """
         logger.info("Starting FAISS synchronization from pgvector...")
         try:
-            # Fetch all embeddings for active students
+            # Fetch all embeddings for active students with their metadata (P4-04)
             stmt = (
-                select(FaceEmbedding.id, FaceEmbedding.embedding, FaceEmbedding.student_id)
+                select(FaceEmbedding.embedding, FaceEmbedding.student_id, Student.full_name, Student.role)
                 .join(Student, Student.student_id == FaceEmbedding.student_id)
                 .where(Student.status == StudentStatus.ACTIVE.value)
             )
@@ -55,8 +55,7 @@ class FaissEngine:
                 # Reset completely before sync
                 self.index = faiss.IndexFlatIP(self.embedding_dim)
                 self.id_map.clear()
-                self.embedding_to_student.clear()
-                self.student_to_embeddings.clear()
+                self.metadata_cache.clear()
                 self.current_idx = 0
                 self.is_ready = False
 
@@ -67,9 +66,9 @@ class FaissEngine:
                     
                 vectors = []
                 for row in rows:
-                    emb_id, emb_data, student_id = row[0], row[1], row[2]
+                    emb_data, student_id, full_name, role = row
                     
-                    # Convert to numpy array safely depending on type returned by pgvector/sqlalchemy
+                    # Convert to numpy array safely
                     if isinstance(emb_data, np.ndarray):
                         vector = emb_data.copy().astype(np.float32)
                     elif isinstance(emb_data, (bytes, memoryview)):
@@ -77,29 +76,22 @@ class FaissEngine:
                     elif isinstance(emb_data, list):
                         vector = np.array(emb_data, dtype=np.float32)
                     else:
-                        logger.warning(f"Unknown embedding type {type(emb_data)} for ID {emb_id}")
                         continue
                     
                     if len(vector) != self.embedding_dim:
-                        logger.warning(f"Skipping corrupt embedding {emb_id}: dim={len(vector)}")
                         continue
                         
                     norm = np.linalg.norm(vector)
                     if norm < 1e-6:
-                        logger.warning(f"Skipping zero vector for embedding {emb_id}")
                         continue
                     
                     # Ensure L2 normalization for Inner Product to act as Cosine Similarity
                     vector = vector / norm
                     vectors.append(vector)
                     
-                    # Store mappings
-                    self.id_map[self.current_idx] = emb_id
-                    self.embedding_to_student[emb_id] = student_id
-                    
-                    if student_id not in self.student_to_embeddings:
-                        self.student_to_embeddings[student_id] = []
-                    self.student_to_embeddings[student_id].append(self.current_idx)
+                    # Store mappings and metadata
+                    self.id_map[self.current_idx] = student_id
+                    self.metadata_cache[student_id] = {"full_name": full_name, "role": role}
                     
                     self.current_idx += 1
                     
@@ -115,7 +107,7 @@ class FaissEngine:
             logger.error(f"FAISS sync failed: {e}")
             self.is_ready = False
 
-    def add_embedding(self, embedding_id: int, student_id: str, vector: np.ndarray):
+    def add_embedding(self, vector: np.ndarray, student_id: str, metadata: Dict[str, str]):
         """Add a new embedding dynamically without full sync."""
         if not self.is_ready:
             return
@@ -123,7 +115,6 @@ class FaissEngine:
         vec = vector.astype(np.float32)
         norm = np.linalg.norm(vec)
         if norm < 1e-6:
-            logger.warning(f"Cannot add zero vector for embedding {embedding_id}")
             return
             
         vec = vec / norm
@@ -131,21 +122,16 @@ class FaissEngine:
         
         with self._lock:
             self.index.add(vec)
-            self.id_map[self.current_idx] = embedding_id
-            self.embedding_to_student[embedding_id] = student_id
-            
-            if student_id not in self.student_to_embeddings:
-                self.student_to_embeddings[student_id] = []
-            self.student_to_embeddings[student_id].append(self.current_idx)
-            
+            self.id_map[self.current_idx] = student_id
+            self.metadata_cache[student_id] = metadata
             self.current_idx += 1
             
-        logger.debug(f"Added new vector to FAISS. Total: {self.current_idx}")
+        logger.debug(f"Added new vector for {student_id} to FAISS. Total: {self.current_idx}")
 
-    def search(self, query_vector: np.ndarray, top_k: int = 3) -> List[Tuple[str, float]]:
+    def search(self, query_vector: np.ndarray, top_k: int = 3) -> List[Dict[str, Any]]:
         """
         Search for nearest neighbors in sub-millisecond.
-        Returns List of (student_id, similarity_score).
+        Returns List of dicts with student_id, score, and metadata.
         """
         if not self.is_ready or self.current_idx == 0:
             return []
@@ -165,30 +151,33 @@ class FaissEngine:
                 return []
                 
             similarities, indices = self.index.search(q, actual_k)
-            # Make copies to process outside lock if needed, though dict copying is fast
+            # Make copies to process outside lock
             sim_list = similarities[0].copy()
             idx_list = indices[0].copy()
             id_map_copy = self.id_map.copy()
-            emb_to_student_copy = self.embedding_to_student.copy()
+            metadata_cache_copy = self.metadata_cache.copy()
         
-        student_best: Dict[str, float] = {}
+        results = []
+        seen_students = set()
+        
         for i in range(actual_k):
             idx = int(idx_list[i])
             if idx == -1 or idx not in id_map_copy:
                 continue
                 
-            emb_id = id_map_copy[idx]
-            student_id = emb_to_student_copy.get(emb_id)
-            if student_id is None:
+            student_id = id_map_copy[idx]
+            if student_id in seen_students:
                 continue
                 
             score = float(sim_list[i])
+            metadata = metadata_cache_copy.get(student_id, {})
             
-            # Keep highest score for each student (B14 fix verification)
-            if student_id not in student_best or score > student_best[student_id]:
-                student_best[student_id] = score
-                
-        # Return sorted list of tuples
-        results = [(sid, score) for sid, score in student_best.items()]
-        results.sort(key=lambda x: x[1], reverse=True)
+            results.append({
+                "student_id": student_id,
+                "score": score,
+                "full_name": metadata.get("full_name"),
+                "role": metadata.get("role")
+            })
+            seen_students.add(student_id)
+            
         return results

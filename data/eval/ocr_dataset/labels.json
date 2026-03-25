@@ -1,0 +1,37 @@
+[
+    {
+        "image": "book_0.jpg",
+        "expected_texts": [
+            "BOOK TITLE 0",
+            "Author Name 0"
+        ]
+    },
+    {
+        "image": "book_1.jpg",
+        "expected_texts": [
+            "BOOK TITLE 1",
+            "Author Name 1"
+        ]
+    },
+    {
+        "image": "book_2.jpg",
+        "expected_texts": [
+            "BOOK TITLE 2",
+            "Author Name 2"
+        ]
+    },
+    {
+        "image": "book_3.jpg",
+        "expected_texts": [
+            "BOOK TITLE 3",
+            "Author Name 3"
+        ]
+    },
+    {
+        "image": "book_4.jpg",
+        "expected_texts": [
+            "BOOK TITLE 4",
+            "Author Name 4"
+        ]
+    }
+]

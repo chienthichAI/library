@@ -1,37 +1,154 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { API_URL } from '../config'
+import { FilesetResolver, FaceDetector } from '@mediapipe/tasks-vision'
 import './VerificationScreen.css'
-
-// Auto-verify settings
-const AUTO_VERIFY_DELAY = 800 // 0.8 seconds of stable quality before auto-verify
-const AUTO_VERIFY_MIN_QUALITY = 0.6 // Minimum quality score
 
 export default function VerificationScreen() {
     const navigate = useNavigate()
     const videoRef = useRef(null)
     const canvasRef = useRef(null)
+    const overlayRef = useRef(null)
     const streamRef = useRef(null)
-    const autoVerifyTimerRef = useRef(null)
+    const smoothedBboxRef = useRef(null) // For smooth tracking animation
+    const animationFrameRef = useRef(null) // For HUD rotation
+    
+    // WebSockets & MediaPipe refs
+    const faceDetectorRef = useRef(null)
+    const wsRef = useRef(null)
+    const trackingLoopRef = useRef(null)
+    const lastFrameTimeRef = useRef(0)
+    const redirectTimeoutRef = useRef(null)
 
     const [isStreaming, setIsStreaming] = useState(false)
-    const [verificationStatus, setVerificationStatus] = useState('idle') // idle, checking, verifying, success, failed
-    const [verifiedStudent, setVerifiedStudent] = useState(null)
-    const [errorMessage, setErrorMessage] = useState(null)
+    const [verificationStatus, _setVerificationStatus] = useState('idle') // idle, checking, verifying, success, failed
+    const verificationStatusRef = useRef('idle')
+
+    const setVerificationStatus = (status) => {
+        verificationStatusRef.current = status
+        _setVerificationStatus(status)
+    }
+
     const [qualityScore, setQualityScore] = useState(null)
     const [faceStatus, setFaceStatus] = useState('waiting') // waiting, valid, invalid
     const [autoVerifyProgress, setAutoVerifyProgress] = useState(0)
     const [statusMessage, setStatusMessage] = useState('Đang khởi động camera...')
+    const [detectedFaces, setDetectedFaces] = useState([]) // Bbox data for UI tracking
+    const [verifiedStudent, setVerifiedStudent] = useState(null) // { id, name, role, confidence }
+    const [errorMessage, setErrorMessage] = useState(null)
 
     useEffect(() => {
-        startCamera()
+        initFaceDetector().then(() => {
+            connectWebSocket()
+            startCamera()
+        })
         return () => {
             stopCamera()
-            if (autoVerifyTimerRef.current) {
-                clearTimeout(autoVerifyTimerRef.current)
-            }
+            if (redirectTimeoutRef.current) clearTimeout(redirectTimeoutRef.current)
+            if (wsRef.current) wsRef.current.close()
+            if (trackingLoopRef.current) cancelAnimationFrame(trackingLoopRef.current)
         }
     }, [])
+
+    const initFaceDetector = async () => {
+        try {
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            )
+            faceDetectorRef.current = await FaceDetector.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite",
+                    delegate: "GPU" // Offload scanning to GPU for high perf
+                },
+                runningMode: "VIDEO"
+            })
+        } catch (err) {
+            console.error("Failed to init FaceDetector:", err)
+        }
+    }
+
+    const connectWebSocket = () => {
+        const wsUrl = API_URL.replace(/^http/, 'ws') + '/auth/ws/stream'
+        const ws = new WebSocket(wsUrl)
+        wsRef.current = ws
+        
+        ws.onclose = (event) => {
+            // code 1000 = server closed cleanly after success — do nothing, UI handles it
+            if (event.code !== 1000) {
+                console.warn('WebSocket closed unexpectedly, code:', event.code)
+                // Will be reconnected by handleRetry if user retries
+            }
+        }
+
+        ws.onerror = (err) => {
+            console.error('WebSocket error:', err)
+        }
+        
+        ws.onmessage = (event) => {
+            // Ignore late packets once flow already reached terminal state.
+            const currentStatus = verificationStatusRef.current
+            if (currentStatus === 'failed' || currentStatus === 'success') {
+                return
+            }
+
+            let result
+            try {
+                result = JSON.parse(event.data)
+            } catch (err) {
+                console.warn('Invalid WebSocket payload:', err)
+                return
+            }
+            
+            if (result.status === "failed") {
+                const isFaceMissingError = result.error_message?.toLowerCase().includes('khuôn mặt')
+                if ((result.quality_issues && result.quality_issues.length > 0) || isFaceMissingError) {
+                    setFaceStatus('invalid')
+                    setStatusMessage(result.error_message || "Vui lòng xem lại vị trí khuôn mặt")
+                    setQualityScore(result.quality_score || 0)
+                } else {
+                    setErrorMessage(result.error_message || 'Xác thực không thành công')
+                    setVerificationStatus('failed')
+                    setFaceStatus('invalid')
+                    if (trackingLoopRef.current) {
+                        cancelAnimationFrame(trackingLoopRef.current)
+                        trackingLoopRef.current = null
+                    }
+                    // Hard-stop websocket so backend cannot continue pushing new auth results.
+                    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        wsRef.current.close(1000, 'terminal_failed')
+                    }
+                }
+            } else if (result.status === "success") {
+                const student = {
+                    id: result.student_id,
+                    name: result.student_name,
+                    role: result.role,
+                    confidence: result.confidence,
+                    verification_token: result.verification_token
+                }
+                setVerifiedStudent(student)
+                setVerificationStatus('success')
+                setFaceStatus('valid')
+                setStatusMessage("Xác thực thành công!")
+                if (trackingLoopRef.current) {
+                    cancelAnimationFrame(trackingLoopRef.current)
+                    trackingLoopRef.current = null
+                }
+                // Auto-navigate sau 3 giây
+                redirectTimeoutRef.current = setTimeout(() => {
+                    if (student.role === 'ADMIN') {
+                        navigate('/admin', { state: { admin: student } })
+                    } else {
+                        navigate('/return', { state: { student } })
+                    }
+                }, 3000)
+            } else if (result.status === "no_face_detected" || result.status === "no_prominent_face") {
+                setFaceStatus('waiting')
+                setStatusMessage(result.error_message || "Đang tìm khuôn mặt...")
+                setQualityScore(null)
+            }
+        }
+    }
 
     const startCamera = async () => {
         try {
@@ -45,6 +162,7 @@ export default function VerificationScreen() {
                     videoRef.current.play().catch(e => console.error('Video play error:', e))
                     setIsStreaming(true)
                     setStatusMessage('Sẵn sàng xác thực. Vui lòng nhìn thẳng.')
+                    trackingLoopRef.current = requestAnimationFrame(trackingLoop)
                 }
             }
         } catch (err) {
@@ -55,32 +173,19 @@ export default function VerificationScreen() {
 
     const stopCamera = () => {
         if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => {
-                track.stop()
-            })
+            streamRef.current.getTracks().forEach(track => track.stop())
             streamRef.current = null
         }
-        if (videoRef.current) {
-            videoRef.current.srcObject = null
-        }
+        if (videoRef.current) videoRef.current.srcObject = null
     }
 
-    // Real-time quality check
-    const checkQuality = useCallback(async () => {
-        if (!videoRef.current || !canvasRef.current || !isStreaming ||
-            verificationStatus !== 'idle' || faceStatus === 'checking') return
-
+    const drawFaceBoxes = useCallback((detections) => {
+        const overlay = overlayRef.current
         const video = videoRef.current
         const canvas = canvasRef.current
-        
-        // Crop the center square for efficiency
-        const size = Math.min(video.videoWidth, video.videoHeight)
-        const sx = (video.videoWidth - size) / 2
-        const sy = (video.videoHeight - size) / 2
-        
-        canvas.width = 400
-        canvas.height = 400
-        canvas.getContext('2d').drawImage(video, sx, sy, size, size, 0, 0, 400, 400)
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        canvas.getContext('2d').drawImage(video, 0, 0)
 
         // Only checking visually in background but don't block UI strictly unless necessary
         // setFaceStatus('checking')
@@ -172,14 +277,10 @@ export default function VerificationScreen() {
         const video = videoRef.current
         const canvas = canvasRef.current
 
-        // Crop the central square to drastically speed up encoding and network upload 
-        const size = Math.min(video.videoWidth, video.videoHeight)
-        const sx = (video.videoWidth - size) / 2
-        const sy = (video.videoHeight - size) / 2
-
-        // Scale down to 400x400 for rapid 20-40ms backend processing
-        canvas.width = 400
-        canvas.height = 400
+        // Scale down to 640x360 to drastically speed up toBlob encoding and network upload 
+        // 15 frames of 1280x720 at 0.95 quality is heavy!
+        canvas.width = 640
+        canvas.height = 360
 
         setStatusMessage('Đang lấy mẫu sinh trắc học...')
 
@@ -187,7 +288,7 @@ export default function VerificationScreen() {
         const requiredFrames = 15 // 15 frames ~ 0.5s for rPPG + screen flicker
 
         const captureInterval = setInterval(() => {
-            canvas.getContext('2d').drawImage(video, sx, sy, size, size, 0, 0, 400, 400)
+            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
             canvas.toBlob((blob) => {
                 if (blob) {
                     frames.push(blob)
@@ -224,15 +325,29 @@ export default function VerificationScreen() {
                     })
                     setVerificationStatus('success')
                 } else {
-                    setErrorMessage(result.error_message || 'Không nhận diện được người dùng')
-                    setVerificationStatus('failed')
+                    setDetectedFaces([])
+                    smoothedBboxRef.current = null // Reset smoothing
+                    const ctx = overlayRef.current?.getContext('2d')
+                    if (ctx) ctx.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height)
                 }
-            } catch (err) {
-                setErrorMessage('Lỗi kết nối đến máy chủ AI')
-                setVerificationStatus('failed')
             }
+            // If status is NOT idle (e.g. error, success), we keep the last frame or clear it?
+            // On failure, we should probably clear the overlay eventually or let handleRetry do it.
         }
-    }
+        
+        // Stop the loop on terminal states — do not waste CPU after authentication is done
+        const currentStatus = verificationStatusRef.current
+        if (currentStatus === 'success' || currentStatus === 'failed') {
+            trackingLoopRef.current = null
+            return
+        }
+        
+        trackingLoopRef.current = requestAnimationFrame(trackingLoop)
+    }, [drawFaceBoxes]) // Removed verificationStatus as dependency - use ref instead
+
+    // Since verification is now continuous, we don't have a separate handleVerify method
+    // But we override it incase the UI button wants to do something
+    const handleVerify = () => {}
 
     const handleProceed = () => {
         if (verifiedStudent.role === 'ADMIN') {
@@ -249,18 +364,29 @@ export default function VerificationScreen() {
         setFaceStatus('waiting')
         setAutoVerifyProgress(0)
 
-        if (videoRef.current && streamRef.current) {
-            videoRef.current.srcObject = streamRef.current
-            videoRef.current.play().catch(e => console.error('Play on retry error:', e))
-        } else {
-            startCamera()
+        // Clear and Reset overlay
+        const ctx = overlayRef.current?.getContext('2d')
+        if (ctx) ctx.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height)
+        smoothedBboxRef.current = null
+
+        // Reconnect WebSocket if closed
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            connectWebSocket()
         }
+
+        // Restart loop if stopped
+        if (trackingLoopRef.current) {
+            cancelAnimationFrame(trackingLoopRef.current)
+            trackingLoopRef.current = null
+        }
+        trackingLoopRef.current = requestAnimationFrame(trackingLoop)
     }
 
     // Helper for circular progress
     const radius = 64;
     const circumference = 2 * Math.PI * radius;
-    const strokeDashoffset = circumference - (autoVerifyProgress / 100) * circumference;
+    // autoVerifyProgress is obsolete now, but we keep it here to avoid deleting UI logic blindly
+    const strokeDashoffset = circumference - (0 / 100) * circumference;
 
     return (
         <div className="verification-screen">
@@ -306,12 +432,16 @@ export default function VerificationScreen() {
                         <div className={`camera-wrapper ${faceStatus}`}>
                             <div className={`camera-container ${verificationStatus}`}>
                                 <video ref={videoRef} autoPlay playsInline muted />
+                                <canvas ref={overlayRef} className="face-tracking-overlay" />
                                 <canvas ref={canvasRef} style={{ display: 'none' }} />
 
+                                <div className={`tracking-badge ${detectedFaces.length > 0 ? 'active' : ''}`}>
+                                    <span className="dot"></span>
+                                    {detectedFaces.length > 0 ? 'Đang Theo Dõi' : 'Đang Tìm...'}
+                                </div>
+
                                 <div className="face-overlay">
-                                    <div className={`face-circle ${faceStatus}`}>
-                                        <div className="scan-line"></div>
-                                    </div>
+                                    {/* Removed face-circle guide as requested */}
                                 </div>
 
                                 {/* Quality indicator */}

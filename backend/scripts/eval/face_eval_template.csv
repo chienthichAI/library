@@ -1,0 +1,4 @@
+event_id,timestamp,event_type,source,track_id,ground_truth_student_id,predicted_student_id,predicted_student_name,confidence,liveness_score,is_real_face,quality_score,processing_time_ms,error_message
+sample-001,2026-03-25T08:30:01,AUTH_SUCCESS,ws,101,SV001,SV001,Nguyen Van A,0.873200,0.932000,true,0.910000,142.35,
+sample-002,2026-03-25T08:30:04,AUTH_MISMATCH,ws,102,SV002,UNKNOWN,,0.000000,0.901000,true,0.885000,155.12,Khong tim thay sinh vien
+sample-003,2026-03-25T08:30:08,SPOOF_DETECTED,ws,103,UNKNOWN,UNKNOWN,,0.000000,0.071000,false,0.802000,133.47,Phat hien gia mao

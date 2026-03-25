@@ -155,7 +155,9 @@ class FaceRecognizer:
                 logger.info(f"Loaded standalone ArcFace model from: {self.model_path} with providers {providers[0] if self.use_gpu else 'CPU'}")
                 
             else:
-                logger.warning("No face recognition model available. Using mock mode.")
+                logger.error("No face recognition model available. Real model is required.")
+                self._initialized = False
+                return False
                 
             self._initialized = True
             return True
@@ -203,7 +205,6 @@ class FaceRecognizer:
                 # Do not apply CLAHE, as InsightFace models expect raw images normalized properly
                 embedding = self._run_onnx_inference(aligned_face)
             else:
-                logger.info(f"[DEBUG] Extracting embedding using mock model")
                 aligned_face = self._apply_clahe(aligned_face)
                 embedding = self._mock_embedding(aligned_face)
                 
@@ -239,6 +240,15 @@ class FaceRecognizer:
         input_name = self._session.get_inputs()[0].name
         output = self._session.run(None, {input_name: blob})
         return output[0].flatten()
+    
+    def _run_insightface_inference(self, face: np.ndarray) -> np.ndarray:
+        """Run straight to recognition model sub-node. Skips detection phase."""
+        if self._rec_model is not None:
+            # InsightFace recognizers typically expect RGB and native 112x112 layout
+            embedding = self._rec_model.get_feat(face)
+            return embedding.flatten()
+            
+        return self._mock_embedding(face)
     
     def _mock_embedding(self, face: np.ndarray) -> np.ndarray:
         """

@@ -1,23 +1,23 @@
 """
 SmartLib Kiosk - Book Identification Service
 
-Handles book detection, barcode reading, and OCR.
-Uses YOLOv8 + pyzbar + PaddleOCR.
+Handles book detection and barcode reading.
+Uses YOLOv8 + pyzbar.
 """
 import numpy as np
 import cv2
+import asyncio
 import time
-from typing import Optional, Tuple, List
+import re
+from typing import Optional, Tuple, List, Set
 from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_, func
 from loguru import logger
-import time
 
 from app.models.book import Book, BookStatus
 from app.ml.book_detector import BookDetector, BookDetectionResult, DetectedObject
 from app.ml.barcode_reader import BarcodeReader, BarcodeResult
-from app.ml.ocr_service import OCRService, BookOCRResult
 
 
 @dataclass
@@ -38,6 +38,8 @@ class BookIdentificationResult:
     # Book database info if found
     book_exists: bool = False
     is_available: bool = False
+    subject_category: Optional[str] = None
+    description: Optional[str] = None
 
 
 from app.core.ml_container import AIModels
@@ -50,28 +52,26 @@ class BookIdentificationService:
     Pipeline:
     1. Detect book in image (YOLOv8)
     2. Detect and read barcode (pyzbar)
-    3. Extract text via OCR (PaddleOCR)
-    4. Lookup book in database
-    5. Return identification result
+    3. Lookup book in database
+    4. Return identification result
     """
     
     def __init__(
         self,
         book_detector: Optional[BookDetector] = None,
-        barcode_reader: Optional[BarcodeReader] = None,
-        ocr_service: Optional[OCRService] = None
+        barcode_reader: Optional[BarcodeReader] = None
     ):
         """Initialize book identification service with pre-loaded components."""
         self.book_detector = book_detector or AIModels.book_detector or BookDetector()
         self.barcode_reader = barcode_reader or BarcodeReader()
-        self.ocr_service = ocr_service or AIModels.ocr_service or OCRService()
+        # OCR Service is no longer used for book identification as per user request
+        self.ocr_service = None # or AIModels.ocr_service or OCRService()
         
     async def initialize(self) -> bool:
         """Models are now initialized via lifespan + AIModels container."""
         if not self.book_detector._initialized:
             self.book_detector.initialize()
-        if not self.ocr_service._initialized:
-            self.ocr_service.initialize()
+        # OCR initialization skipped as it's disabled
         return True
     
     async def identify(
@@ -115,41 +115,30 @@ class BookIdentificationService:
             barcode_confidence = 0.0
             
             if barcode_result:
-                book_id = barcode_result.data
+                book_id = barcode_result.data.strip()
                 barcode_confidence = barcode_result.confidence
                 # Step 3: Fast lookup
                 book = await self._lookup_book(book_id, db)
                 if book:
                     logger.info(f"Book found via barcode: {book.title}")
             
-            # Step 4: OCR as backup (only if book not found via barcode)
-            ocr_result = None
             if not book:
-                logger.info("Starting OCR as backup...")
-                ocr_result = await self._extract_text(book_image)
-                
-                if ocr_result and ocr_result.title:
-                    # Step 5: Lookup via title
-                    book = await self._search_book_by_title(ocr_result.title, db)
-                    if book:
-                        book_id = book.book_id
-                        logger.info(f"Book found via OCR title: {book.title}")
-            
-            if not book:
-                # Return partial result with OCR info
+                # Return partial result if barcode not found (OCR backup removed)
                 return BookIdentificationResult(
                     success=False,
                     book_id=book_id,
-                    title=ocr_result.title if ocr_result else None,
-                    author=ocr_result.author if ocr_result else None,
+                    title=None,
+                    author=None,
                     barcode=book_id,
                     status=None,
                     detection_confidence=detection_confidence,
                     barcode_confidence=barcode_confidence,
-                    ocr_confidence=ocr_result.confidence if ocr_result else 0.0,
-                    error_message="Sách không có trong hệ thống",
+                    ocr_confidence=0.0,
+                    error_message="Không tìm thấy sách qua barcode hoặc sách chưa có trong hệ thống",
                     processing_time_ms=(time.time() - start_time) * 1000,
-                    book_exists=False
+                    book_exists=False,
+                    subject_category=None,
+                    description=None
                 )
                 
             return BookIdentificationResult(
@@ -161,11 +150,13 @@ class BookIdentificationService:
                 status=book.status.value,
                 detection_confidence=detection_confidence,
                 barcode_confidence=barcode_confidence,
-                ocr_confidence=ocr_result.confidence if ocr_result else 0.0,
+                ocr_confidence=0.0,
                 error_message=None,
                 processing_time_ms=(time.time() - start_time) * 1000,
                 book_exists=True,
-                is_available=book.is_available
+                is_available=book.is_available,
+                subject_category=book.subject_category,
+                description=book.description
             )
             
         except Exception as e:
@@ -190,7 +181,7 @@ class BookIdentificationService:
     ) -> Optional[BarcodeResult]:
         """Ultra-robust barcode reading with multiple image enhancement passes."""
         # Pass 1: Raw image (Fastest)
-        barcodes = self.barcode_reader.read(image)
+        barcodes = await asyncio.to_thread(self.barcode_reader.read, image)
         if barcodes: return self._pick_best_barcode(barcodes)
         
         # Convert to gray for enhancements
@@ -199,18 +190,18 @@ class BookIdentificationService:
         # Pass 2: Brightness boost (Helpful for dark environments like yours)
         # Increase brightness and contrast
         bright = cv2.convertScaleAbs(gray, alpha=1.5, beta=30)
-        barcodes = self.barcode_reader.read(bright)
+        barcodes = await asyncio.to_thread(self.barcode_reader.read, bright)
         if barcodes: return self._pick_best_barcode(barcodes)
         
         # Pass 3: Adaptive Thresholding (Great for blurry/shiny barcodes)
         thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
-        barcodes = self.barcode_reader.read(thresh)
+        barcodes = await asyncio.to_thread(self.barcode_reader.read, thresh)
         if barcodes: return self._pick_best_barcode(barcodes)
         
         # Pass 4: CLAHE (Contrast Limited Adaptive Histogram Equalization)
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         cl1 = clahe.apply(gray)
-        barcodes = self.barcode_reader.read(cl1)
+        barcodes = await asyncio.to_thread(self.barcode_reader.read, cl1)
         if barcodes: return self._pick_best_barcode(barcodes)
         
         return None
@@ -222,35 +213,76 @@ class BookIdentificationService:
                 return bc
         return barcodes[0]
     
-    async def _extract_text(
-        self,
-        image: np.ndarray
-    ) -> Optional[BookOCRResult]:
-        """Extract book info via OCR."""
-        try:
-            return self.ocr_service.extract_book_info(image)
-        except Exception as e:
-            logger.warning(f"OCR extraction failed: {e}")
-            return None
-    
     async def _lookup_book(
         self,
         book_id: str,
         db: AsyncSession
     ) -> Optional[Book]:
-        """Lookup book by ID or barcode."""
-        # Try by book_id
-        stmt = select(Book).where(Book.book_id == book_id)
+        """Lookup book by ID/barcode/ISBN with normalization and ISBN fallback."""
+        if not book_id:
+            return None
+
+        raw = book_id.strip()
+        normalized = self._normalize_code(raw)
+        candidates: Set[str] = {raw}
+        if normalized:
+            candidates.add(normalized)
+            isbn13 = self._isbn10_to_isbn13(normalized)
+            if isbn13:
+                candidates.add(isbn13)
+
+        # 1) Exact match against all identifiers
+        stmt = select(Book).where(
+            or_(
+                Book.book_id.in_(list(candidates)),
+                Book.barcode.in_(list(candidates)),
+                Book.isbn_13.in_(list(candidates)),
+                Book.isbn_10.in_(list(candidates)),
+            )
+        )
         result = await db.execute(stmt)
         book = result.scalar_one_or_none()
-        
         if book:
             return book
-            
-        # Try by barcode
-        stmt = select(Book).where(Book.barcode == book_id)
-        result = await db.execute(stmt)
-        return result.scalar_one_or_none()
+
+        # 2) Normalized match: ignore spaces/hyphens/case in DB identifiers
+        if normalized:
+            norm_book_id = func.replace(func.replace(func.upper(Book.book_id), "-", ""), " ", "")
+            norm_barcode = func.replace(func.replace(func.upper(Book.barcode), "-", ""), " ", "")
+            norm_isbn13 = func.replace(func.replace(func.upper(Book.isbn_13), "-", ""), " ", "")
+            norm_isbn10 = func.replace(func.replace(func.upper(Book.isbn_10), "-", ""), " ", "")
+            stmt = select(Book).where(
+                or_(
+                    norm_book_id == normalized,
+                    norm_barcode == normalized,
+                    norm_isbn13 == normalized,
+                    norm_isbn10 == normalized,
+                )
+            ).limit(1)
+            result = await db.execute(stmt)
+            return result.scalar_one_or_none()
+
+        return None
+
+    @staticmethod
+    def _normalize_code(code: str) -> str:
+        """Keep only alphanumeric characters and uppercase for robust matching."""
+        return re.sub(r"[^0-9A-Za-z]", "", code or "").upper()
+
+    @staticmethod
+    def _isbn10_to_isbn13(isbn10: str) -> Optional[str]:
+        """Convert ISBN-10 to ISBN-13 when possible."""
+        clean = (isbn10 or "").upper()
+        if not re.fullmatch(r"\d{9}[\dX]", clean):
+            return None
+
+        body = "978" + clean[:9]
+        total = 0
+        for idx, ch in enumerate(body):
+            weight = 1 if idx % 2 == 0 else 3
+            total += int(ch) * weight
+        check = (10 - (total % 10)) % 10
+        return f"{body}{check}"
     
     async def _search_book_by_title(
         self,
@@ -292,8 +324,9 @@ class BookIdentificationService:
                 
         except Exception as e:
             logger.error(f"SQL fuzzy search failed: {e}. Falling back to basic search.")
-            # Emergency fallback to simple ILIKE
-            stmt = select(Book).where(Book.title.ilike(f"%{search_title}%")).limit(1)
+            # Emergency fallback to simple ILIKE (P4-04: escape wildcards)
+            safe_title = search_title.replace("%", "\\%").replace("_", "\\_")
+            stmt = select(Book).where(Book.title.ilike(f"%{safe_title}%")).limit(1)
             result = await db.execute(stmt)
             return result.scalar_one_or_none()
             
