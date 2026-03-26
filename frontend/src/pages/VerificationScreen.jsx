@@ -182,148 +182,165 @@ export default function VerificationScreen() {
     const drawFaceBoxes = useCallback((detections) => {
         const overlay = overlayRef.current
         const video = videoRef.current
-        const canvas = canvasRef.current
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
-        canvas.getContext('2d').drawImage(video, 0, 0)
+        if (!overlay || !video) return
 
-        // Only checking visually in background but don't block UI strictly unless necessary
-        // setFaceStatus('checking')
+        // Sync overlay size with video display size
+        const displayWidth = video.clientWidth
+        const displayHeight = video.clientHeight
+        
+        if (displayWidth === 0 || displayHeight === 0) return
 
-        canvas.toBlob(async (blob) => {
-            if (!blob) return;
-            try {
-                const formData = new FormData()
-                formData.append('image', blob, 'quality_check.jpg')
+        if (overlay.width !== displayWidth || overlay.height !== displayHeight) {
+            overlay.width = displayWidth
+            overlay.height = displayHeight
+        }
 
-                const response = await fetch(`${API_URL}/auth/check-quality`, {
-                    method: 'POST',
-                    body: formData
-                })
+        const ctx = overlay.getContext('2d')
+        ctx.clearRect(0, 0, overlay.width, overlay.height)
 
-                if (response.ok) {
-                    const result = await response.json()
-                    setQualityScore(result.overall_score)
+        const scaleX = overlay.width / video.videoWidth
+        const scaleY = overlay.height / video.videoHeight
 
-                    if (result.is_valid && result.overall_score >= AUTO_VERIFY_MIN_QUALITY) {
-                        setFaceStatus('valid')
-                        setStatusMessage('Đã khóa mục tiêu. Giữ im vị trí!')
+        detections.forEach((det, idx) => {
+            const isPrimary = idx === 0
+            if (!isPrimary) return // Only draw premium HUD for primary face
 
-                        // Start auto-verify timer if not already running
-                        if (!autoVerifyTimerRef.current && verificationStatus === 'idle') {
-                            setAutoVerifyProgress(0)
+            const confidence = det.categories[0].score
+            const { originX, width, originY, height } = det.boundingBox
 
-                            // Progress animation
-                            let progress = 0
-                            const progressInterval = setInterval(() => {
-                                progress += 10
-                                setAutoVerifyProgress(progress)
-                                if (progress >= 100) {
-                                    clearInterval(progressInterval)
-                                }
-                            }, AUTO_VERIFY_DELAY / 10)
+            // 1. Calculate Target Mirrored Coords
+            const targetX1 = overlay.width - ((originX + width) * scaleX)
+            const targetY1 = originY * scaleY
+            const targetW = width * scaleX
+            const targetH = height * scaleY
 
-                            // Auto-verify after delay
-                            autoVerifyTimerRef.current = setTimeout(() => {
-                                clearInterval(progressInterval)
-                                setAutoVerifyProgress(100)
-                                handleVerify()
-                                autoVerifyTimerRef.current = null
-                            }, AUTO_VERIFY_DELAY)
-                        }
-                    } else {
-                        setFaceStatus('invalid')
-                        setStatusMessage(result.message || 'Vui lòng căn chỉnh lại khuôn mặt')
-
-                        // Cancel auto-verify if quality drops
-                        if (autoVerifyTimerRef.current) {
-                            clearTimeout(autoVerifyTimerRef.current)
-                            autoVerifyTimerRef.current = null
-                            setAutoVerifyProgress(0)
-                        }
-                    }
-                } else {
-                    setFaceStatus('invalid')
-                    setStatusMessage('Ánh sáng yếu hoặc không rõ mặt')
-
-                    if (autoVerifyTimerRef.current) {
-                        clearTimeout(autoVerifyTimerRef.current)
-                        autoVerifyTimerRef.current = null
-                        setAutoVerifyProgress(0)
-                    }
-                }
-            } catch (err) {
-                console.log('Quality API error:', err)
-                setFaceStatus('waiting')
+            // 2. Smooth the Bounding Box (LERP)
+            if (!smoothedBboxRef.current) {
+                smoothedBboxRef.current = { x: targetX1, y: targetY1, w: targetW, h: targetH }
+            } else {
+                const lerp = 0.25 // Smoothness factor
+                smoothedBboxRef.current.x += (targetX1 - smoothedBboxRef.current.x) * lerp
+                smoothedBboxRef.current.y += (targetY1 - smoothedBboxRef.current.y) * lerp
+                smoothedBboxRef.current.w += (targetW - smoothedBboxRef.current.w) * lerp
+                smoothedBboxRef.current.h += (targetH - smoothedBboxRef.current.h) * lerp
             }
-        }, 'image/jpeg', 0.8)
-    }, [isStreaming, verificationStatus, faceStatus])
 
-    // Periodic quality check
-    useEffect(() => {
-        if (!isStreaming || verificationStatus !== 'idle') return
+            const { x, y, w, h } = smoothedBboxRef.current
+            const x2 = x + w
+            const y2 = y + h
 
-        const interval = setInterval(checkQuality, 800)
-        return () => clearInterval(interval)
-    }, [isStreaming, verificationStatus, checkQuality])
+            const color = '#22c55e'
+            const glowColor = 'rgba(34,197,94,0.4)'
+            const now = Date.now() / 1000
 
-    const handleVerify = async () => {
-        if (!videoRef.current || !canvasRef.current) return
+            const centerX = x + w/2
+            const centerY = y + h/2
+            
+            // --- DRAW HUD BRACKETS ---
+            ctx.save()
+            
+            // Subtle Background fill
+            ctx.fillStyle = 'rgba(34, 197, 94, 0.05)'
+            ctx.fillRect(x, y, w, h)
 
-        setVerificationStatus('verifying')
-        setErrorMessage(null)
-        setAutoVerifyProgress(0)
+            // Inner Corner Highlights
+            ctx.shadowColor = color
+            ctx.shadowBlur = 10
+            ctx.strokeStyle = color
+            ctx.lineWidth = 3
+            ctx.lineCap = 'butt'
 
+            const brSize = w * 0.15 // Bracket size
+            // Corners
+            ctx.beginPath(); ctx.moveTo(x, y + brSize); ctx.lineTo(x, y); ctx.lineTo(x + brSize, y); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(x2 - brSize, y); ctx.lineTo(x2, y); ctx.lineTo(x2, y + brSize); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(x, y2 - brSize); ctx.lineTo(x, y2); ctx.lineTo(x + brSize, y2); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(x2 - brSize, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - brSize); ctx.stroke()
+
+            // Side Ticks (Optional premium touch)
+            ctx.lineWidth = 1
+            ctx.beginPath(); ctx.moveTo(x - 5, centerY); ctx.lineTo(x + 5, centerY); ctx.stroke()
+            ctx.beginPath(); ctx.moveTo(x2 - 5, centerY); ctx.lineTo(x2 + 5, centerY); ctx.stroke()
+
+            ctx.restore()
+
+            // --- DATA READOUTS ---
+            const fontSize = 11
+            ctx.font = `${fontSize}px "JetBrains Mono", monospace`
+            ctx.fillStyle = color
+            
+            // ID Badge
+            const idText = `SUBJECT_ID: ${faceStatus === 'valid' ? 'AUTHORIZED' : 'SCANNING'}`
+            ctx.fillText(idText, x, y - 15)
+
+            // Tech Brackets (Left Data)
+            const metrics = [
+                `ACC: ${Math.round(confidence * 100)}%`,
+                `POS: ${Math.round(x)},${Math.round(y)}`,
+                `DIM: ${Math.round(w)}x${Math.round(h)}`
+            ]
+            
+            metrics.forEach((m, i) => {
+                ctx.fillStyle = 'rgba(34,197,94,0.7)'
+                ctx.fillText(m, x2 + 10, y + (i * (fontSize + 5)) + 15)
+            })
+
+            // Scanning Line inside the box (Matrix Effect)
+            const scanPos = (Math.sin(now * 2.5) + 1) / 2
+            const scanY = y + (h * scanPos)
+            const grad = ctx.createLinearGradient(x, scanY, x2, scanY)
+            grad.addColorStop(0, 'transparent')
+            grad.addColorStop(0.5, 'rgba(34,197,94,0.4)')
+            grad.addColorStop(1, 'transparent')
+            ctx.fillStyle = grad
+            ctx.fillRect(x, scanY - 1, w, 2)
+        })
+    }, [faceStatus])
+
+    const trackingLoop = useCallback(() => {
+        const now = performance.now()
+        const status = verificationStatusRef.current
+        
+        // Sync overlay size with display size before doing anything
+        const overlay = overlayRef.current
         const video = videoRef.current
-        const canvas = canvasRef.current
-
-        // Scale down to 640x360 to drastically speed up toBlob encoding and network upload 
-        // 15 frames of 1280x720 at 0.95 quality is heavy!
-        canvas.width = 640
-        canvas.height = 360
-
-        setStatusMessage('Đang lấy mẫu sinh trắc học...')
-
-        const frames = []
-        const requiredFrames = 15 // 15 frames ~ 0.5s for rPPG + screen flicker
-
-        const captureInterval = setInterval(() => {
-            canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height)
-            canvas.toBlob((blob) => {
-                if (blob) {
-                    frames.push(blob)
+        if (overlay && video && video.readyState >= 2) {
+            const displayWidth = video.clientWidth
+            const displayHeight = video.clientHeight
+            if (displayWidth !== 0 && displayHeight !== 0) {
+                if (overlay.width !== displayWidth || overlay.height !== displayHeight) {
+                    overlay.width = displayWidth
+                    overlay.height = displayHeight
                 }
+            }
+        }
 
-                if (frames.length >= requiredFrames) {
-                    clearInterval(captureInterval)
-                    sendForAuth(frames)
-                }
-            }, 'image/jpeg', 0.8)
-        }, 33)
-
-        const sendForAuth = async (capturedFrames) => {
-            try {
-                const formData = new FormData()
-                capturedFrames.forEach((frame, index) => {
-                    formData.append('images', frame, `face_${index}.jpg`)
-                })
-
-                setStatusMessage('Mã hóa & Xác thực mã định danh...')
-                const response = await fetch(`${API_URL}/auth/verify-face`, {
-                    method: 'POST',
-                    body: formData
-                })
-
-                const result = await response.json()
-
-                if (result.success && result.is_real_face) {
-                    setVerifiedStudent({
-                        id: result.student_id,
-                        name: result.student_name,
-                        role: result.role,
-                        confidence: result.confidence
-                    })
-                    setVerificationStatus('success')
+        // Always run detector if camera is ready, even if WS is down
+        if (videoRef.current && videoRef.current.readyState >= 2 && faceDetectorRef.current) {
+            // ONLY detect and draw if status is idle
+            if (status === 'idle') {
+                const detections = faceDetectorRef.current.detectForVideo(videoRef.current, now)
+                
+                if (detections.detections.length > 0) {
+                    setDetectedFaces(detections.detections)
+                    drawFaceBoxes(detections.detections)
+                    
+                    // Only send to WS if open and rate limited
+                    if (wsRef.current?.readyState === WebSocket.OPEN && now - lastFrameTimeRef.current >= 100) {
+                        lastFrameTimeRef.current = now
+                        
+                        const canvas = canvasRef.current
+                        canvas.width = 640
+                        canvas.height = 360
+                        const ctx = canvas.getContext('2d')
+                        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height)
+                        
+                        canvas.toBlob((blob) => {
+                            if (blob && wsRef.current?.readyState === WebSocket.OPEN) {
+                                wsRef.current.send(blob)
+                            }
+                        }, 'image/jpeg', 0.8)
+                    }
                 } else {
                     setDetectedFaces([])
                     smoothedBboxRef.current = null // Reset smoothing
@@ -564,4 +581,3 @@ export default function VerificationScreen() {
         </div>
     )
 }
-

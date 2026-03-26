@@ -204,7 +204,13 @@ class FaceRecognizer:
                 logger.info(f"[DEBUG] Extracting embedding using standalone ONNX session")
                 # Do not apply CLAHE, as InsightFace models expect raw images normalized properly
                 embedding = self._run_onnx_inference(aligned_face)
+            elif self._rec_model is not None:
+                # If we hitched to InsightFace's existing FaceAnalysis instance,
+                # prefer the real recognizer instead of the mock embedding.
+                logger.info(f"[DEBUG] Extracting embedding using InsightFace recognizer")
+                embedding = self._run_insightface_inference(aligned_face)
             else:
+                # Last-resort fallback for testing/dev environments without a real model.
                 aligned_face = self._apply_clahe(aligned_face)
                 embedding = self._mock_embedding(aligned_face)
                 

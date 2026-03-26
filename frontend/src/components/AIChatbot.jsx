@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import axios from 'axios';
-import { API_URL } from '../config';
+import { useNavigate } from 'react-router-dom';
+import { chatApi } from '../services/chatbotApi';
 import './AIChatbot.css';
 
 const AIChatbot = () => {

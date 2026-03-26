@@ -1,0 +1,2 @@
+Columns in policy_chunks: id (integer), chunk_text (text), embedding (USER-DEFINED), chunk_index (integer), section_title (text), source (text), created_at (timestamp with time zone)
+Columns in chat_history: id (uuid), session_id (text), role (text), content (text), created_at (timestamp with time zone), student_id (text), extra_metadata (jsonb)

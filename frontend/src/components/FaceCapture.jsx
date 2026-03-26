@@ -1,3 +1,4 @@
+
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { FilesetResolver, FaceDetector } from '@mediapipe/tasks-vision'
 import { API_URL } from '../config'
@@ -270,88 +271,63 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
         })
     }, [faceStatus])
 
-    // --- Quality check + face detection ---
-    const checkQuality = useCallback(async () => {
-        if (!videoRef.current || !canvasRef.current || !isStreaming
-            || isCheckingRef.current || countdown !== null || cooldown) return
-
-        const video = videoRef.current
-        const canvas = canvasRef.current
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
-        const ctx = canvas.getContext('2d')
-        ctx.translate(canvas.width, 0)
-        ctx.scale(-1, 1)
-        ctx.drawImage(video, 0, 0)
-
-        isCheckingRef.current = true
-
-        canvas.toBlob(async (blob) => {
-            try {
-                const formData = new FormData()
-                formData.append('image', blob, 'quality_check.jpg')
-                const response = await fetch(`${API_URL}/auth/check-quality`, {
-                    method: 'POST', body: formData
-                })
-
-                if (response.ok) {
-                    const result = await response.json()
-                    setQualityScore(result.overall_score)
-                    setQualityIssues(result.issues || [])
-
-                    // Vẽ bbox nếu API trả về faces
-                    if (result.faces && result.faces.length > 0) {
-                        setDetectedFaces(result.faces)
-                        drawFaceBoxes(result.faces, video.videoWidth, video.videoHeight)
-                    } else {
-                        setDetectedFaces([])
-                        const overlay = overlayRef.current
-                        if (overlay) {
-                            const c = overlay.getContext('2d')
-                            c.clearRect(0, 0, overlay.width, overlay.height)
-                        }
+    // --- Tracking Loop (WS + MediaPipe) ---
+    const trackingLoop = useCallback(() => {
+        if (!isStreaming || countdown !== null || cooldown || !videoRef.current || !canvasRef.current || wsRef.current?.readyState !== WebSocket.OPEN) {
+            rafRef.current = requestAnimationFrame(trackingLoop)
+            return
+        }
+        
+        const now = performance.now()
+        
+        // 1. Detect using MediaPipe
+        if (faceDetectorRef.current && videoRef.current.readyState >= 2) {
+            const detections = faceDetectorRef.current.detectForVideo(videoRef.current, now)
+            
+            // 2. Client-side rule: Only compress/transmit IF face is found
+            if (detections.detections.length > 0) {
+                setDetectedFaces(detections.detections)
+                drawFaceBoxes(detections.detections)
+                setTrackingStatus('tracking')
+                
+                // 3. Rate limit sending WebSocket frame (e.g. 10 fps)
+                if (now - lastFrameTimeRef.current >= 100) {
+                    lastFrameTimeRef.current = now
+                    if (wsRef.current?.readyState === WebSocket.OPEN && !isCheckingRef.current) {
+                        const canvas = canvasRef.current
+                        canvas.width = 640 // downscale payload size
+                        canvas.height = 360
+                        const ctx = canvas.getContext('2d')
+                        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height)
+                        
+                        isCheckingRef.current = true
+                        canvas.toBlob((blob) => {
+                            if (blob && wsRef.current?.readyState === WebSocket.OPEN) {
+                                wsRef.current.send(blob)
+                            } else {
+                                isCheckingRef.current = false
+                            }
+                        }, 'image/jpeg', 0.8)
                     }
-
-                    if (result.is_valid && result.overall_score >= AUTO_CAPTURE_MIN_QUALITY) {
-                        setFaceStatus('valid')
-                        setStatusMessage('✓ Giữ nguyên! Đang tự động chụp...')
-                        if (!autoCaptureTimerRef.current) {
-                            setAutoCaptureProgress(0)
-                            let progress = 0
-                            progressIntervalRef.current = setInterval(() => {
-                                progress += 10
-                                setAutoCaptureProgress(progress)
-                                if (progress >= 100) clearInterval(progressIntervalRef.current)
-                            }, AUTO_CAPTURE_DELAY / 10)
-
-                            autoCaptureTimerRef.current = setTimeout(() => {
-                                clearInterval(progressIntervalRef.current)
-                                setAutoCaptureProgress(100)
-                                triggerAutoCapture()
-                                autoCaptureTimerRef.current = null
-                            }, AUTO_CAPTURE_DELAY)
-                        }
-                    } else {
-                        setFaceStatus('invalid')
-                        setStatusMessage(result.message || 'Điều chỉnh vị trí khuôn mặt')
-                        clearTimeout(autoCaptureTimerRef.current)
-                        clearInterval(progressIntervalRef.current)
-                        autoCaptureTimerRef.current = null
-                        setAutoCaptureProgress(0)
-                    }
-                } else {
-                    setFaceStatus('waiting')
-                    clearTimeout(autoCaptureTimerRef.current)
-                    autoCaptureTimerRef.current = null
-                    setAutoCaptureProgress(0)
                 }
-            } catch {
-                setFaceStatus('valid')
-                setStatusMessage('Đưa khuôn mặt vào khung')
-            } finally {
-                isCheckingRef.current = false // Luôn reset
+            } else {
+                setDetectedFaces([])
+                smoothedBboxRef.current = null
+                const ctx = overlayRef.current?.getContext('2d')
+                if (ctx) ctx.clearRect(0, 0, overlayRef.current.width, overlayRef.current.height)
+                setTrackingStatus('searching')
+                setFaceStatus('waiting')
+                setStatusMessage('Không tìm thấy khuôn mặt')
+                
+                // clear timers
+                clearTimeout(autoCaptureTimerRef.current)
+                clearInterval(progressIntervalRef.current)
+                autoCaptureTimerRef.current = null
+                setAutoCaptureProgress(0)
             }
-        }, 'image/jpeg', 0.8)
+        }
+
+        rafRef.current = requestAnimationFrame(trackingLoop)
     }, [isStreaming, countdown, cooldown, drawFaceBoxes])
 
     useEffect(() => {
@@ -369,11 +345,11 @@ export default function FaceCapture({ onCapture, requiredCaptures = 3 }) {
         const video = videoRef.current
         const canvas = canvasRef.current
         const ctx = canvas.getContext('2d')
-        
-        // Scale down to 640x360 for faster processing and smaller payloads
-        canvas.width = 640
-        canvas.height = 360
-        ctx.drawImage(video, 0, 0, 640, 360)
+        canvas.width = video.videoWidth
+        canvas.height = video.videoHeight
+        ctx.translate(canvas.width, 0)
+        ctx.scale(-1, 1)
+        ctx.drawImage(video, 0, 0)
 
         canvas.toBlob((blob) => {
             const imageUrl = URL.createObjectURL(blob)

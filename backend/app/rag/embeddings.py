@@ -6,13 +6,20 @@ logger = logging.getLogger(__name__)
 class EmbeddingsService:
     """
     Converts text chunks into numerical vectors that capture semantic meaning.
-    Using all-mpnet-base-v2 per standard guidelines.
+    Using keepitreal/vietnamese-sbert which provides high performance at 1024d.
+    Note: 'embeddings.position_ids | UNEXPECTED' warning is a known BERT/BGE load report 
+    artifact that can be safely ignored.
     """
+    _instance = None
     
-    @staticmethod
-    def get_embeddings():
-        logger.info("Initializing HuggingFaceEmbeddings (all-mpnet-base-v2)...")
-        return HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-mpnet-base-v2",
-            model_kwargs={'device': 'cpu'}
-        )
+    @classmethod
+    def get_embeddings(cls):
+        if cls._instance is None:
+            logger.info("Initializing HuggingFaceEmbeddings (keepitreal/vietnamese-sbert)...")
+            # For BGE models, normalization is recommended for cosine similarity/distances.
+            cls._instance = HuggingFaceEmbeddings(
+                model_name="keepitreal/vietnamese-sbert",
+                model_kwargs={'device': 'cpu'},
+                encode_kwargs={'normalize_embeddings': True}
+            )
+        return cls._instance

@@ -1,9 +1,9 @@
-import os
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
 import logging
+import os
+from typing import List, Optional
+
+import httpx
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -15,39 +15,61 @@ def _format_docs(docs):
 
 class GeneratorService:
     """
-    Generation Layer: Combines context and query into Prompt, uses LLM (Groq) to generate answer.
+    Generation Layer: Combines context and query into Prompt, uses local LLM (Ollama) to generate answer.
     """
     
-    def __init__(self, retriever):
-        groq_api_key = os.getenv("GROQ_API_KEY")
-        if not groq_api_key:
-            raise EnvironmentError(
-                "GROQ_API_KEY is not set. Set it in the environment before starting the service."
-            )
-
-        logger.info("Initializing ChatGroq LLM (gemma2-9b-it)...")
-        self.llm = ChatGroq(
-            temperature=0,
-            model_name="llama-3.3-70b-versatile",
-            api_key=groq_api_key,
-        )
-        
-        prompt = ChatPromptTemplate.from_template(
-            "Use the following context to answer the question. "
-            "If you don't know the answer, say you don't know.\n\n"
-            "Context:\n{context}\n\n"
-            "Question: {question}\n\n"
-            "Answer:"
-        )
-        
-        logger.info("Building LCEL RAG chain (stuff mode)...")
-        self.rag_chain = (
-            {"context": retriever | _format_docs, "question": RunnablePassthrough()}
-            | prompt
-            | self.llm
-            | StrOutputParser()
-        )
+    def __init__(self, retriever, *, model: Optional[str] = None, base_url: Optional[str] = None):
+        self.retriever = retriever
+        self.model = model or os.getenv("OLLAMA_MODEL", "qwen3:4b")
+        self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         
     async def generate_response(self, query: str):
         logger.info(f"Generating response for query: {query}")
-        return await self.rag_chain.ainvoke(query)
+
+        docs = await self.retriever.ainvoke(query)
+        context = _format_docs(docs) if docs else ""
+
+        system = (
+            "Bạn là trợ lý AI của thư viện SmartLib. "
+            "Hãy trả lời tiếng Việt, ngắn gọn, đúng trọng tâm. "
+            "Nếu context không đủ, hãy nói bạn chưa chắc và gợi ý người dùng cung cấp thêm thông tin."
+        )
+
+        prompt = (
+            f"{system}\n\n"
+            f"Context:\n{context}\n\n"
+            f"Question: {query}\n\n"
+            f"Answer:"
+        )
+
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            async with client.stream(
+                "POST", 
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "stream": True,
+                },
+            ) as resp:
+                resp.raise_for_status()
+                full_content = ""
+                import json
+                async for line in resp.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                        msg = chunk.get("message") or {}
+                        content = msg.get("content") or chunk.get("response")
+                        if content:
+                            full_content += content
+                        if chunk.get("done"):
+                            break
+                    except json.JSONDecodeError:
+                        continue
+                
+                return full_content or "Xin lỗi, hiện tại tôi chưa thể tạo câu trả lời."
