@@ -396,8 +396,8 @@ class TransactionService:
                     error_message="Không tìm thấy giao dịch mượn sách để gia hạn"
                 )
 
-            # Check if already renewed
-            if getattr(transaction, 'renewal_count', 0) >= 1:
+            # Check if already renewed (renewal_count is now a proper DB column)
+            if (transaction.renewal_count or 0) >= 1:
                 return BorrowResult(
                     success=False,
                     transaction_id=transaction.transaction_id,
@@ -422,9 +422,7 @@ class TransactionService:
             transaction.due_date = new_due
             transaction.status = TransactionStatus.ACTIVE  # Reset overdue flag if any
 
-            # Increment renewal counter (requires migration if column not yet added)
-            if hasattr(transaction, 'renewal_count'):
-                transaction.renewal_count = (transaction.renewal_count or 0) + 1
+            transaction.renewal_count = (transaction.renewal_count or 0) + 1
 
             await db.commit()
 
@@ -567,3 +565,7 @@ class TransactionService:
         )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
+
+
+# Singleton instance
+transaction_service = TransactionService()

@@ -170,6 +170,66 @@ p {
   color: var(--text-secondary);
 }
 
+/* --- Markdown Content Styling (Premium) --- */
+.prose {
+  color: #4b5563;
+  line-height: 1.6;
+}
+
+.prose strong {
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+/* Enhanced Table Styling */
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.25rem 0;
+  font-size: 0.95rem;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
+}
+
+.prose thead {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-bottom: 2px solid #e2e8f0;
+}
+
+.prose th {
+  padding: 12px 16px;
+  text-align: left;
+  font-weight: 700;
+  color: #334155;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.prose td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
+  color: #475569;
+}
+
+.prose tr:last-child td {
+  border-bottom: none;
+}
+
+.prose tr:hover td {
+  background-color: #f8fafc;
+}
+
+/* Mobile-friendly horizontal scroll for tables */
+.chat-message-bubble {
+  max-width: 90%;
+  word-wrap: break-word;
+  overflow-x: auto; /* Allow horizontal scroll for tables */
+}
+
 .form-input {
   width: 100%;
   padding: 14px 16px;

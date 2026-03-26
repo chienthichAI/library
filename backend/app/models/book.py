@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.database import Base
+from pgvector.sqlalchemy import Vector
 
 if TYPE_CHECKING:
     from app.models.transaction import Transaction
@@ -58,6 +59,9 @@ class Book(Base):
     
     # Category/Subject
     subject_category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # AI-enriched categories (present in Supabase schema)
+    smart_category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    ai_category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # Cover image path (for display and AI training)
@@ -81,6 +85,10 @@ class Book(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow
     )
+
+    # bge-m3 produces 1024-dim embeddings for semantic book search.
+    # Note: this column may be added via `backend/setup_pgvector.sql`.
+    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(1024), nullable=True)
     
     # Relationships
     transactions: Mapped[List["Transaction"]] = relationship(

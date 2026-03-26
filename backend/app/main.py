@@ -96,6 +96,14 @@ async def lifespan(app: FastAPI):
         raise e
     finally:
         logger.info("SmartLib Kiosk Backend shutting down.")
+        
+        # Close LLM and Embedding clients
+        from app.services.llm_service import ai_chat_assistant, ai_intent_classifier
+        from app.services.embedding_service import embedding_service
+        await ai_chat_assistant.close()
+        await ai_intent_classifier.close()
+        await embedding_service.close()
+        
         await close_db()
     logger.info("Database connection closed")
 

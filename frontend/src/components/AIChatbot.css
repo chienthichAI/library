@@ -29,8 +29,10 @@
     position: absolute;
     bottom: 90px;
     right: 0;
-    width: 400px;
-    height: 600px;
+    width: 550px;
+    height: 800px;
+    max-height: calc(100vh - 120px);
+    max-width: calc(100vw - 60px);
     background: rgba(255, 255, 255, 0.8);
     -webkit-backdrop-filter: blur(20px);
     backdrop-filter: blur(20px);
@@ -92,6 +94,52 @@
     color: #1f2937;
     align-self: flex-start;
     border-bottom-left-radius: 4px;
+    max-width: 92%;
+    overflow-x: auto; /* Handle wide tables */
+}
+
+/* Custom Scrollbar for Bot Messages with Tables */
+.bot-message::-webkit-scrollbar {
+    height: 4px;
+}
+.bot-message::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 10px;
+}
+
+/* Markdown Styling overrides for Bot Message */
+.prose {
+    font-size: 0.95rem;
+}
+
+.prose p {
+    margin: 0.5rem 0;
+}
+
+.prose p:first-child {
+    margin-top: 0;
+}
+
+.prose p:last-child {
+    margin-bottom: 0;
+}
+
+.prose ul, .prose ol {
+    margin: 0.5rem 0;
+    padding-left: 1.5rem;
+}
+
+.prose li {
+    margin-bottom: 0.25rem;
+}
+
+.prose blockquote {
+    margin: 0.75rem 0;
+    padding: 0.5rem 1rem;
+    border-left: 4px solid #6366f1;
+    background: rgba(99, 102, 241, 0.05);
+    font-style: italic;
+    border-radius: 0 8px 8px 0;
 }
 
 .user-message {

@@ -3,6 +3,8 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { API_URL } from '../config';
 import './AIChatbot.css';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const AIChatbot = () => {
     const navigate = useNavigate();
@@ -84,7 +86,15 @@ const AIChatbot = () => {
                     <div className="chat-messages">
                         {messages.map((msg, idx) => (
                             <div key={idx} className={`message ${msg.role === 'bot' ? 'bot-message' : 'user-message'}`}>
-                                {msg.content}
+                                {msg.role === 'bot' ? (
+                                    <div className="prose">
+                                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                            {msg.content}
+                                        </ReactMarkdown>
+                                    </div>
+                                ) : (
+                                    <div className="user-text">{msg.content}</div>
+                                )}
 
                                 {msg.suggestions && msg.suggestions.length > 0 && (
                                     <div className="suggestions-container">

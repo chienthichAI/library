@@ -30,6 +30,7 @@ class TransactionStatus(str, enum.Enum):
     COMPLETED = "COMPLETED" # Book has been returned
     OVERDUE = "OVERDUE"     # Past due date
     CANCELLED = "CANCELLED"
+    RESERVED = "RESERVED"   # Book is reserved (waiting queue)
 
 
 class Transaction(Base):
@@ -72,8 +73,8 @@ class Transaction(Base):
     )
     
     # Dates
-    borrow_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    borrow_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    due_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     return_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     
     # Overdue tracking
@@ -96,6 +97,9 @@ class Transaction(Base):
     # Snapshot path (captured image for audit)
     snapshot_path: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     
+    # Renewal tracking — max 1 renewal per borrow
+    renewal_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     # Notes
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     

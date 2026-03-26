@@ -57,6 +57,18 @@ class Settings(BaseSettings):
     fine_per_day: int = 10000  # VND
     max_books_per_student: int = 5
     
+    # AI Assistant (Chatbot) Configuration
+    ollama_base_url: str = Field(default="http://localhost:11434")
+    llm_chat_model: str = Field(default="Vi-Qwen2-3B-RAG")
+    llm_intent_model: str = Field(default="Vi-Qwen2-3B-RAG")
+    
+    # Intent Detection (PhoBERT)
+    intent_phobert_model: str = Field(default="vinai/phobert-base-v2")
+    intent_phobert_confidence_threshold: float = Field(default=0.45)
+    
+    # RAG / Hybrid Search
+    hybrid_semantic_weight: float = Field(default=0.6, description="Weight for semantic score in hybrid search (0-1)")
+    
     # Server
     host: str = "0.0.0.0"
     port: int = 8000

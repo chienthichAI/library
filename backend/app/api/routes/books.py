@@ -223,7 +223,9 @@ async def create_book(
             publisher=book.publisher,
             publication_year=book.publication_year,
             language=book.language,
-            subject_category=book.subject_category
+            subject_category=book.subject_category,
+            smart_category=book.smart_category,
+            ai_category=book.ai_category,
         )
 
         db.add(new_book)
@@ -271,6 +273,12 @@ async def update_book(
             book.title = update.title
         if update.author is not None:
             book.author = update.author
+        if update.subject_category is not None:
+            book.subject_category = update.subject_category
+        if update.smart_category is not None:
+            book.smart_category = update.smart_category
+        if update.ai_category is not None:
+            book.ai_category = update.ai_category
         if update.status is not None:
             # Protect borrowed books from accidental status override
             if book.status == BookStatus.BORROWED and update.status == BookStatus.AVAILABLE:
