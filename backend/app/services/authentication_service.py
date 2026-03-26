@@ -88,13 +88,13 @@ class AuthenticationService:
         # Use pre-loaded models from AIModels container by default
         self.face_detector = face_detector or AIModels.face_detector or FaceDetector()
         
-        # Recognize & Anti-spoofing currently instantiated here as they are lightweight OR
-        # they should also be added to the container if they are heavy ONNX models.
-        self.face_recognizer = face_recognizer or FaceRecognizer(
+        self.face_recognizer = face_recognizer or AIModels.face_recognizer or FaceRecognizer(
             face_analysis_instance=getattr(self.face_detector, '_model', None),
-            model_path=settings.face_model_path if not getattr(self.face_detector, '_model', None) else None
+            model_path=settings.face_model_path if not getattr(self.face_detector, '_model', None) else None,
+            use_gpu=settings.use_gpu
         )
-        self.anti_spoofing = anti_spoofing or AntiSpoofing(
+        self.anti_spoofing = anti_spoofing or AIModels.anti_spoofing or AntiSpoofing(
+
             model_path=settings.antispoofing_model_path,
             threshold=self.liveness_threshold
         )

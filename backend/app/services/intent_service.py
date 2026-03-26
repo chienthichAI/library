@@ -17,33 +17,38 @@ from typing import Dict, Any, Optional, Tuple
 from loguru import logger
 
 
-INTENT_PROMPT = """# RULE: RESPONSE MUST BE ONLY JSON. NO CONVERSATION.
+INTENT_PROMPT = """# BẮT BUỘC: CHỈ TRẢ VỀ JSON. TUYỆT ĐỐI KHÔNG GIẢI THÍCH.
 
-Bạn là chuyên gia phân loại ý định (intent classifier) cho thư viện SmartLib. 
-Phân loại câu hỏi vào 1 trong các loại sau:
+Bạn là engine phân loại ý định (intent classifier) cho thư viện SmartLib. 
+Hãy phân loại câu hỏi của người dùng vào 1 trong các loại sau:
 
-1. book_search: Tìm sách, gợi ý sách, hỏi về chủ đề (Ví dụ: "Tìm sách Python", "Sách của AI").
-2. stock_check: Hỏi về vị trí, còn sách không, ai đang mượn (Ví dụ: "Cuốn Java còn không?", "Sách ở kệ nào?").
-3. debt_check: Kiểm tra nợ, tiền phạt, MSSV (Ví dụ: "Mình nợ bao nhiêu", "Check SE123456").
-4. policy_query: Quy định, giờ mở cửa, cách làm thẻ (Ví dụ: "Mở cửa đến mấy giờ?", "Mượn được bao lâu?").
-5. renew_book: Gia hạn sách đang mượn, muốn mượn thêm thời gian (Ví dụ: "Cho mình gia hạn cuốn Java", "Sách sắp hết hạn, muốn mượn thêm").
-6. reserve_book: Đặt trước sách, đăng ký hàng chờ (Ví dụ: "Cuốn Python hết rồi, cho mình đặt trước", "Khi nào sách Java về thì báo mình").
-7. general_chat: Chào hỏi, cảm ơn (Ví dụ: "Chào bạn", "Cảm ơn").
+1. book_search: Tìm sách, gợi ý sách, hỏi về chủ đề (VD: "Tìm sách Python", "Sách của AI").
+2. stock_check: Hỏi về vị trí, còn sách không, ai đang mượn (VD: "Cuốn Java còn không?", "Sách ở kệ nào?").
+3. debt_check: Kiểm tra nợ, tiền phạt, thông tin cá nhân của mình, sách đang mượn (VD: "Mình nợ bao nhiêu", "Thông tin tôi", "Sách mình đang mượn").
+4. policy_query: Quy định, giờ mở cửa, cách làm thẻ, hạn mượn (VD: "Mở cửa đến mấy giờ?", "Mượn được bao lâu?").
+5. renew_book: Gia hạn sách đang mượn (VD: "Cho mình gia hạn", "Mượn thêm thời gian").
+6. reserve_book: Đặt trước sách (VD: "Đặt trước cuốn Python").
+7. return_book: Hỏi về thủ tục trả sách hoặc thông báo trả sách (VD: "Muốn trả sách", "Thủ tục trả sách thế nào").
+8. general_chat: Chào hỏi, cảm ơn, tán gẫu (VD: "Chào bạn", "Cảm ơn").
 
-VÍ DỤ TRẢ VỀ:
-User: "Tìm sách python"
-Output: {"intent": "book_search", "entities": {"topic": "python"}, "confidence": 1.0}
-
-TRẢ VỀ JSON:
+# ĐỊNH DẠNG TRẢ VỀ (JSON ONLY):
 {
   "intent": "tên_intent",
   "entities": {
-    "book_title": "tên sách",
-    "student_id": "MSSV",
-    "topic": "chủ đề"
+    "book_title": "tên sách cụ thể nếu có",
+    "student_id": "MSSV nếu có",
+    "topic": "chủ đề tìm kiếm hoặc thể loại nếu có (VD: lập trình, kinh tế)",
+    "language": "mã ngôn ngữ nếu yêu cầu cụ thể (vi, en, ja, zh, km)"
   },
-  "confidence": 0.9
-}"""
+  "confidence": 1.0
+}
+
+# VÍ DỤ:
+User: "Tìm sách python" -> {"intent": "book_search", "entities": {"topic": "python"}, "confidence": 1.0}
+User: "Sách tiếng Anh về kinh tế" -> {"intent": "book_search", "entities": {"topic": "kinh tế", "language": "en"}, "confidence": 1.0}
+User: "Mình muốn trả sách" -> {"intent": "return_book", "entities": {}, "confidence": 1.0}
+User: "alo" -> {"intent": "general_chat", "entities": {}, "confidence": 1.0}
+"""
 
 
 from app.config import settings
@@ -121,7 +126,12 @@ class IntentService:
 
             import torch
 
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # Determine device based on settings and availability
+            if settings.use_gpu and torch.cuda.is_available():
+                device = torch.device("cuda")
+            else:
+                device = torch.device("cpu")
+                
             model.to(device)
 
             id2label = getattr(model.config, "id2label", None) or {}
@@ -233,7 +243,8 @@ class IntentService:
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": message}
                 ],
-                temperature=0.01 # Stable high precision
+                temperature=0.01, # Stable high precision
+                format="json"
             )
             
             content = response.get("message", {}).get("content", "")

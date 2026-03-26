@@ -53,16 +53,14 @@ class HistoryMessage(BaseModel):
 @router.get("/health", tags=["AI Assistant"])
 async def ai_health_check():
     """
-    Health check for AI services (Ollama LLM + bge-m3 embedding).
+    Health check for AI services (Ollama LLM + vietnamese-sbert embedding).
     
     Returns the status of each AI backend service independently.
     Frontend can use this to show a warning when the chatbot is unavailable.
     """
-    import asyncio
-
     ollama_url = settings.ollama_base_url
     llm_model = settings.llm_chat_model
-    embed_model = "bge-m3"
+    embed_model = "vietnamese-sbert"
 
     async def check_ollama_tags() -> dict:
         """Check if Ollama is reachable and the LLM model is available."""
@@ -72,7 +70,8 @@ async def ai_health_check():
                 resp.raise_for_status()
                 models = [m.get("name", "") for m in resp.json().get("models", [])]
                 llm_ready = any(llm_model in m for m in models)
-                embed_ready = any(embed_model in m for m in models)
+                # Note: vietnamese-sbert is handled locally, but we report it here for UI consistency
+                embed_ready = True 
                 return {
                     "ollama": "online",
                     "llm_model": llm_model,

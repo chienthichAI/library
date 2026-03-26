@@ -8,6 +8,7 @@ import re
 import httpx
 from typing import List, Dict, Any, Optional
 from loguru import logger
+from app.config import settings
 
 
 def strip_think_tags(text: str) -> str:
@@ -56,20 +57,11 @@ class LlmService:
         top_p: float = 0.9,
         num_ctx: Optional[int] = None,
         num_predict: Optional[int] = None,
+        format: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send a chat request to Ollama and return parsed response.
-        
-        Args:
-            messages: List of {role, content} dicts
-            stream: Whether to stream output (currently unused)
-            temperature: Sampling temperature
-            top_p: Nucleus sampling parameter
-            
-        Returns:
-            Ollama response dict with message.content stripped of think tags
         """
-        # Use native Ollama API for better stability and lower latency
         payload = {
             "model": self.model,
             "messages": messages,
@@ -80,6 +72,8 @@ class LlmService:
                 "num_predict": num_predict or 1024,
             }
         }
+        if format:
+            payload["format"] = format
 
         try:
             client = await self._get_client()
@@ -129,8 +123,12 @@ class LlmService:
         NOTE: Use EmbeddingService (bge-m3) for RAG embedding instead.
         This is kept for backward compatibility only.
         """
-        from app.services.embedding_service import embedding_service
-        return await embedding_service.embed(text)
+        try:
+            from app.services.embedding_service import embedding_service
+            return await embedding_service.embed(text)
+        except Exception as e:
+            logger.error(f"Embedding generation failed: {e}")
+            return None
 
     def create_system_prompt(self, context_books: List[Any] = None) -> str:
         """
@@ -153,9 +151,6 @@ class LlmService:
         return prompt
 
 
-from app.config import settings
-
-
 # Two separate LLMs:
 # - `ai_chat_assistant`: used for RAG generation (Vietnamese model)
 # - `ai_intent_classifier`: used for JSON intent fallback (more JSON-stable model)
@@ -171,3 +166,4 @@ ai_intent_classifier = LlmService(
 
 # Backward-compatible alias (some modules may still import `ai_assistant`)
 ai_assistant = ai_chat_assistant
+

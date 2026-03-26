@@ -47,10 +47,11 @@ SYSTEM_PROMPT_BASE = """
 
 # GUIDELINES:
 - **ĐỊNH DẠNG BẮT BUỘC**: Nếu có danh sách từ 2 sách trở lên, **BẮT BUỘC** hiển thị bằng **BẢNG (Markdown Table)**. TUYỆT ĐỐI KHÔNG dùng danh sách liệt kê thông thường.
-- **BẢO VỆ CHẤT LƯỢNG (QUAN TRỌNG)**: Chỉ hiển thị những sách thực sự phù hợp với ngôn ngữ hoặc chủ đề người dùng yêu cầu. 
+- **BẢO VỆ CHẤT LƯỢNG (QUAN TRỌNG)**: Chỉ hiển thị những sách thực sự phù hợp với ngôn ngữ hoặc chủ đề người dùng yêu cầu.
   - Ví dụ: Nếu người dùng tìm "Tiếng Anh" nhưng context có sách "Tiếng Nhật", bạn **PHẢI LOẠI BỎ** sách Tiếng Nhật đó khỏi câu trả lời.
-  - Đừng cố gắng đưa vào những kết quả không liên quan chỉ để đủ số lượng.
-- Nếu không tìm thấy sách phù hợp nào, hãy thông báo lịch sự và gợi ý từ khóa khác.
+  - **NGHIÊM CẤM TỰ BỊA (HALLUCINATION)**: Chỉ được phép giới thiệu những sách **ĐÃ CÓ TRONG KẾT QUẢ TÌM KIẾM** (context). TUYỆT ĐỐI KHÔNG giới thiệu bất kỳ cuốn sách nào khác ngoài danh sách được cung cấp.
+  - Nếu không tìm thấy sách nào thực sự phù hợp trong context, hãy thông báo chân thành: "Rất tiếc, mình không tìm thấy sách [Chủ đề] cụ thể nào, nhưng dưới đây là một số sách gần giống nhất mà thư viện hiện có:" hoặc "Hiện tại thư viện chưa có đầu sách này, bạn có muốn mình tìm chủ đề khác không?".
+- Nếu danh sách context hoàn toàn không liên quan, hãy phản hồi: "Hiện tại mình chưa tìm thấy cuốn sách chính xác này trong hệ thống thư viện."
 
 # TRÌNH BÀY PHẢN HỒI:
 1. **Tiêu đề**: Tóm tắt ngắn gọn ý chính (VD: "Dưới đây là các sách Tiếng Anh mình tìm thấy:").
@@ -109,8 +110,8 @@ class ChatService:
         """
         logger.info(f"[Chat] session={session_id}, student={student_id}, msg='{message[:60]}...'")
 
-        # === Step 1: Load conversation history ===
-        history = await self._load_history(db, session_id)
+        # === Step 1: Load conversation history (Student-first persistence) ===
+        history = await self._load_history(db, session_id, student_id)
 
         # === Step 2: Load Student Context (Personalization) ===
         student_context = await self._load_student_context(db, student_id)
@@ -120,7 +121,7 @@ class ChatService:
         query_embedding = await embedding_service.embed(message)
         if not query_embedding:
             logger.warning("[Chat] Embedding failed, falling back to empty vector")
-            query_embedding = [0.0] * 1024 # Placeholder
+            query_embedding = [0.0] * 768 # Placeholder (768d for vietnamese-sbert)
 
         # === Step 4: Detect intent ===
         intent_result = await intent_service.classify(message, history)
@@ -138,7 +139,9 @@ class ChatService:
             "student_id": student_id,
             "student_name": student_name
         }
-        
+
+        # --- FALLBACK RETRIEVAL ---
+        # Rely on intent_service (LLM) classification to handle all cases
         if intent == "book_search":
             # 1. SEARCH FOR BOOKS with AI-extracted entities
             result = await rag_service.search_books_hybrid(
@@ -146,7 +149,8 @@ class ChatService:
                 query_text=message,
                 query_embedding=query_embedding,
                 top_k=5,
-                entities=entities
+                entities=entities,
+                intent=intent
             )
             tool_context = rag_service.format_books_for_context(result)
             suggestions = result[:3]
@@ -159,15 +163,19 @@ class ChatService:
                 query_text=message,
                 query_embedding=query_embedding,
                 top_k=5,
-                entities=entities
+                entities=entities,
+                intent=intent
             )
             tool_context = rag_service.format_books_for_context(result)
             suggestions = result[:3]
             sources = [{"type": "book_stock", "data": b} for b in result]
 
         elif intent == "debt_check":
-            result = await check_student_debt(db, message, entities=entities, session_student_id=student_id)
-            tool_context = result["context"]
+            if not student_id:
+                tool_context = "⚠️ Vui lòng đăng nhập (nhận diện khuôn mặt) để mình tra cứu thông tin nợ phạt và sách đang mượn chính xác của bạn nhé."
+            else:
+                result = await check_student_debt(db, message, entities=entities, session_student_id=student_id)
+                tool_context = result["context"]
 
         elif intent == "policy_query":
             result = await query_policy(db, message)
@@ -188,6 +196,17 @@ class ChatService:
                 result = await reserve_book_tool(db, student_id, entities=entities)
                 tool_context = result["context"]
 
+        elif intent == "return_book":
+            # For return book, we guide them to the kiosk hardware/procedure
+            tool_context = (
+                "📚 **Thủ tục trả sách TỰ ĐỘNG tại SmartLib Kiosk**:\n"
+                "1. Bạn không cần gặp nhân viên. Hãy chọn nút **'Trả sách'** trên màn hình chính của Kiosk này.\n"
+                "2. Đưa mã vạch (barcode) ở bìa sau của sách vào vùng quét laser.\n"
+                "3. Hệ thống sẽ nhận diện sách và tự động hoàn tất giao dịch trong **3 giây**.\n"
+                "4. Nếu có nợ phạt, hệ thống sẽ hiển thị số tiền và bạn có thể quét mã QR để thanh toán ngay.\n"
+                "5. Sau khi quét xong, hãy đặt sách vào hộc **'Trả sách tự động'** bên dưới."
+            )
+
         # === Step 5.1: Personalized Recommendations (Optional Add-on) ===
         recommendation_context = ""
         if student_id and intent in ["general_chat", "book_search"]:
@@ -197,10 +216,13 @@ class ChatService:
                 recommendation_context = rec_result["context"]
 
         # === Step 6: Build enriched prompt ===
+        # Always use student personal context if available (borrowing status, etc.)
+        full_student_info = student_context.get("context", "")
+        
         system_prompt = self._build_system_prompt(
             intent, 
             tool_context, 
-            student_context.get("context", ""),
+            full_student_info,
             recommendation_context
         )
         llm_messages = [{"role": "system", "content": system_prompt}]
@@ -241,15 +263,30 @@ class ChatService:
         }
 
     def _build_system_prompt(self, intent: str, tool_context: str, student_info: str = "", recommendations: str = "") -> str:
-        """Construct intent-specific system prompt with retrieved context."""
+        """Construct intent-specific system prompt with dual-flow logic (Public vs Personalized)."""
         prompt = SYSTEM_PROMPT_BASE
         
+        # --- Mode 1: PERSONALIZED (Logged in) ---
         if student_info:
-            prompt += f"\n\n**THÔNG TIN SINH VIÊN**:\n{student_info}"
+            prompt += (
+                "\n\n# 👤 TRẠNG THÁI: ĐÃ ĐĂNG NHẬP (LUỒNG CÁ NHÂN HÓA)\n"
+                "- Bạn đang phục vụ riêng cho sinh viên này.\n"
+                "- Ưu tiên trả lời dựa trên thông tin cá nhân (nợ, sách đang mượn).\n"
+                f"**HỒ SƠ SINH VIÊN**:\n{student_info}"
+            )
+            if recommendations:
+                prompt += f"\n\n> [!TIP]\n> **Gợi ý dành riêng cho bạn**:\n{recommendations}"
         
-        if recommendations:
-            prompt += f"\n\n> [!TIP]\n> **Gợi ý dành riêng cho bạn**:\n{recommendations}"
+        # --- Mode 2: PUBLIC (Not logged in) ---
+        else:
+            prompt += (
+                "\n\n# 🌐 TRẠNG THÁI: KHÁCH (LUỒNG CÔNG CỘNG)\n"
+                "- Tuyệt đối KHÔNG trả lời thông tin cá nhân.\n"
+                "- Chỉ hỗ trợ: tìm sách, kiểm tra kho, hỏi quy trình.\n"
+                "- Luôn kết thúc bằng việc nhắc nhở đăng nhập (Face Auth) để dùng full tính năng.\n"
+            )
 
+        # --- Intent Routing ---
         if intent == "book_search":
             prompt += (
                 "\n\n**Nhiệm vụ hiện tại**: Tìm kiếm và tư vấn sách.\n"
@@ -290,6 +327,13 @@ class ChatService:
                 "Nếu sách đang có sẵn, bảo họ không cần đặt trước mà mượn luôn.\n\n"
                 f"--- KẾT QUẢ ĐẶT TRƯỚC ---\n{tool_context}"
             )
+        elif intent == "return_book":
+            prompt += (
+                "\n\n**Nhiệm vụ hiện tại**: Hướng dẫn trả sách TỰ ĐỘNG.\n"
+                "Tuyệt đối KHÔNG bảo sinh viên gặp nhân viên trừ khi có sự cố kỹ thuật.\n"
+                "Hãy nhấn mạnh vào sự tiện lợi và tốc độ của Kiosk tự phục vụ.\n\n"
+                f"--- QUY TRÌNH TRẢ SÁCH ---\n{tool_context}"
+            )
         else:
             prompt += (
                 "\n\n**Nhiệm vụ hiện tại**: Trò chuyện thân thiện với sinh viên.\n"
@@ -299,13 +343,20 @@ class ChatService:
         return prompt
 
     async def _load_history(
-        self, db: AsyncSession, session_id: str
+        self, db: AsyncSession, session_id: str, student_id: Optional[str] = None
     ) -> List[Dict[str, str]]:
-        """Load recent chat history from DB for context window."""
+        """
+        Load recent chat history.
+        Prioritizes student_id for global persistence (User Memory).
+        Falls back to session_id for anonymous users.
+        """
         try:
+            # Persistent memory strategy: prioritize student over session
+            filter_clause = ChatHistory.student_id == student_id if student_id else ChatHistory.session_id == session_id
+            
             stmt = (
                 select(ChatHistory.role, ChatHistory.content)
-                .where(ChatHistory.session_id == session_id)
+                .where(filter_clause)
                 .order_by(desc(ChatHistory.created_at))
                 .limit(self.HISTORY_WINDOW)
             )
@@ -320,7 +371,7 @@ class ChatService:
                     "content": content
                 })
 
-            logger.debug(f"Loaded {len(messages)} history messages for session {session_id}")
+            logger.debug(f"Loaded {len(messages)} persistent history messages (student={student_id}, session={session_id})")
             return messages
         except Exception as e:
             logger.error(f"Failed to load history: {e}")

@@ -16,11 +16,6 @@ from sqlalchemy import text
 class RAGService:
     """
     Retrieval service using pgvector for semantic similarity search.
-    
-    Supports:
-    - Semantic book search via bge-m3 embeddings
-    - Keyword fallback search for books
-    - Policy document retrieval
     """
 
     async def search_books_semantic(
@@ -29,19 +24,7 @@ class RAGService:
         query_embedding: List[float],
         top_k: int = 5,
     ) -> List[Dict[str, Any]]:
-        """
-        Search books by vector similarity using pgvector cosine distance.
-        
-        Args:
-            db: Database session
-            query_embedding: 1024-dim query embedding from bge-m3
-            top_k: Maximum results to return
-            
-        Returns:
-            List of book dicts sorted by relevance
-        """
         try:
-            # pgvector cosine similarity: 1 - cosine_distance
             sql = text("""
                 SELECT 
                     b.book_id, b.title, b.author, b.subject_category, 
@@ -59,7 +42,6 @@ class RAGService:
                 LIMIT :top_k
             """)
 
-            # Convert list to pgvector format string
             vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
             result = await db.execute(sql, {"query_vec": vec_str, "top_k": top_k})
             rows = result.mappings().all()
@@ -78,12 +60,10 @@ class RAGService:
                     "language": row["language"] or "vi",
                     "similarity": round(float(row["similarity"]), 3),
                 })
-            
-            logger.info(f"Semantic book search → {len(books)} results")
             return books
         except Exception as e:
             logger.error(f"Semantic book search failed: {e}")
-            await db.rollback()  # Reset transaction state
+            await db.rollback()
             return []
 
     async def search_books_hybrid(
@@ -92,73 +72,106 @@ class RAGService:
         query_text: str,
         query_embedding: List[float],
         top_k: int = 5,
-        entities: Optional[Dict[str, Any]] = None
+        entities: Optional[Dict[str, Any]] = None,
+        intent: str = "book_search"
     ) -> List[Dict[str, Any]]:
         """
-        Hybrid search combining:
-        1. Exact ID Match (Highest Priority)
-        2. Full-Text Search (Keyword)
-        3. Vector Similarity (Semantic)
-        
-        Using Reciprocal Rank Fusion (RRF) logic.
+        Refined Hybrid search (Pro-Max):
+        Combines Semantic (pgvector), Lexical (FTS - Websearch), and Metadata Boosting.
         """
         try:
-            # 1. Prepare query string and embedding
+            # 1. Input Preparation
             vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
             
-            # 2. Execute a single powerful hybrid SQL query
-            # We use CTE (Common Table Expressions) to rank each method
+            # Use entities from AI/LLM instead of hardcoded rules
+            lang_boost = None
+            target_lang_keyword = None
+            
+            if entities:
+                lang_boost = entities.get("language")
+                # Map common codes to display names if needed for exact search
+                lang_map = {"en": "Tiếng Anh", "vi": "Tiếng Việt", "ja": "Tiếng Nhật", "zh": "Tiếng Trung"}
+                target_lang_keyword = lang_map.get(lang_boost) if lang_boost else None
+
+            # 2. Text Preprocessing for FTS
+            # Clean and expand search terms - Extract meaningful tokens using NLP
+            tagged_tokens = pos_tag(query_text.lower())
+            allowed_tags = {'N', 'NP', 'V', 'A', 'M', 'Np', 'Nc'}
+            
+            # Words to ignore to avoid noise, but avoiding a large hardcoded list 
+            # We rely on POS tag 'N', 'NP' for nouns which are usually our search terms
+            meaningful_keys = []
+            for token, tag in tagged_tokens:
+                if tag in allowed_tags:
+                    clean = re.sub(r'[^\w\s]', '', token).strip()
+                    if clean and len(clean) > 1:
+                        meaningful_keys.append(clean)
+            
+            topic_entity = ""
+            if entities and isinstance(entities, dict):
+                topic_entity = entities.get("topic", "") or entities.get("book_title", "")
+            
+            # Combine meaningful keys for FTS
+            if topic_entity:
+                # If we have a clear topic from AI, use it as the core FTS query
+                fts_query_str = topic_entity
+                # If there are other meaningful keys not in the topic, add them lightly
+                extra_keys = [k for k in meaningful_keys if k.lower() not in topic_entity.lower()]
+                if extra_keys:
+                    fts_query_str += " " + " ".join(extra_keys)
+            else:
+                fts_query_str = " ".join(list(set(meaningful_keys))) if meaningful_keys else query_text
+            
+            if not fts_query_str.strip():
+                fts_query_str = query_text
+
+            # 3. SQL Construction with RRF-inspired scoring
             sql = text("""
                 WITH semantic_hits AS (
-                    SELECT book_id, 1 - (embedding <=> cast(:query_vec as vector)) as score,
+                    SELECT book_id, 1 - (embedding <=> cast(:query_vec as vector)) as sim,
                            ROW_NUMBER() OVER (ORDER BY embedding <=> cast(:query_vec as vector)) as rank
                     FROM books
                     WHERE embedding IS NOT NULL
-                    LIMIT 20
+                    LIMIT 40
                 ),
                 keyword_hits AS (
-                    -- Rank based on Full-Text Search and high-precision category matches
                     SELECT book_id, 
-                           ts_rank(fts, plainto_tsquery('simple', :query_text_ts)) +
-                           ts_rank(fts, phraseto_tsquery('simple', :query_text_phrase)) +
-                           (CASE 
-                                WHEN subject_category ILIKE :topic_exact THEN 1.0
-                                WHEN title ILIKE :topic_exact THEN 1.0
-                                ELSE 0 
-                            END) as internal_score,
+                           ts_rank_cd(fts, websearch_to_tsquery('simple', :fts_query)) as rank_score,
                            ROW_NUMBER() OVER (
-                               ORDER BY (
-                                   ts_rank(fts, plainto_tsquery('simple', :query_text_ts)) + 
-                                   ts_rank(fts, phraseto_tsquery('simple', :query_text_phrase)) +
-                                   (CASE WHEN subject_category ILIKE :topic_exact THEN 1.0 ELSE 0 END)
-                               ) DESC
+                               ORDER BY ts_rank_cd(fts, websearch_to_tsquery('simple', :fts_query)) DESC
                            ) as rank
                     FROM books
-                    WHERE fts @@ plainto_tsquery('simple', :query_text_ts)
-                       OR fts @@ phraseto_tsquery('simple', :query_text_phrase)
-                       OR subject_category ILIKE :topic_exact
-                       OR title ILIKE :topic_exact
-                    LIMIT 20
+                    WHERE fts @@ websearch_to_tsquery('simple', :fts_query)
+                       OR (title ILIKE :topic_exact AND :topic_exact != '' AND :intent != 'book_search')
+                       OR (subject_category ILIKE :topic_exact AND :topic_exact != '')
+                    LIMIT 40
                 ),
                 exact_hits AS (
-                    -- Highest priority for specific book titles or IDs mentioned
-                    SELECT book_id, 10.0 as score, 1 as rank
+                    SELECT book_id, 
+                           (CASE 
+                                WHEN title ILIKE :exact_match THEN 6.0 -- Exact user phrase match
+                                WHEN title ILIKE :topic_exact AND :topic_exact != '' AND :intent != 'book_search' THEN 4.0 -- AI Topic phrase match
+                                WHEN title ILIKE :lang_kw AND :lang_kw != '' THEN 2.0 -- Language keyword match
+                                WHEN subject_category ILIKE :topic_exact AND :topic_exact != '' THEN 4.5 -- AI Category match (Boosted for book_search)
+                                ELSE 0.5
+                            END) as match_score
                     FROM books
-                    WHERE book_id = :query_text 
-                       OR title ILIKE :query_text_exact
-                       OR (title ILIKE :topic_exact AND :topic_exact != '')
+                    WHERE (title ILIKE :exact_match AND :intent != 'book_search')
+                       OR (title ILIKE :topic_exact AND :topic_exact != '' AND :intent != 'book_search')
+                       OR (title ILIKE :lang_kw AND :lang_kw != '')
+                       OR (subject_category ILIKE :topic_exact AND :topic_exact != '')
                 )
                 SELECT 
                     b.book_id, b.title, b.author, b.subject_category, 
                     b.smart_category, b.description, b.status, b.publisher,
                     b.publication_year, b.language,
                     t.due_date, t.days_overdue,
-                    -- Combine scores: Boost exact matches, then mix semantic/keyword
-                    -- Add a tiny boost for English/Vietnamese relevance based on entities
-                    COALESCE(e.score, 0) + 
-                    (1.0 / (60 + COALESCE(s.rank, 500))) + 
-                    (1.0 / (60 + COALESCE(k.rank, 500))) +
-                    (CASE WHEN :topic_exact ILIKE '%anh%' AND b.subject_category ILIKE '%Nhật%' THEN -0.5 ELSE 0 END) AS final_score
+                    -- Advanced Scoring Formula
+                    COALESCE(e.match_score, 0) + 
+                    (1.0 / (60 + COALESCE(s.rank, 500))) * 12 + -- Semantic weight (Heaviest)
+                    (1.0 / (60 + COALESCE(k.rank, 500))) * 6 +  -- Keyword weight
+                    (CASE WHEN b.language = :lang_boost THEN 0.5 ELSE 0 END) +
+                    (CASE WHEN b.status = 'AVAILABLE' THEN 0.3 ELSE 0 END) AS final_score
                 FROM books b
                 LEFT JOIN semantic_hits s ON b.book_id = s.book_id
                 LEFT JOIN keyword_hits k ON b.book_id = k.book_id
@@ -167,56 +180,22 @@ class RAGService:
                     b.book_id = t.book_id 
                     AND t.status IN ('ACTIVE', 'OVERDUE')
                 )
-                WHERE s.book_id IS NOT NULL OR k.book_id IS NOT NULL OR e.book_id IS NOT NULL
+                WHERE s.book_id IS NOT NULL 
+                   OR k.book_id IS NOT NULL 
+                   OR e.book_id IS NOT NULL
+                   OR (b.title ILIKE :topic_exact AND :topic_exact != '')
                 ORDER BY final_score DESC
                 LIMIT :top_k
             """)
-
-            # Smart tokenization and filtering using POS tagging
-            tagged_tokens = pos_tag(query_text.lower())
             
-            # Words to keep (Nouns, Verbs, Adjectives, etc.)
-            allowed_tags = {'N', 'NP', 'V', 'A', 'M', 'Np', 'Nc'}
-            
-            # First pass: Filter tokens accurately based on POS
-            final_tokens = []
-            for token, tag in tagged_tokens:
-                if tag in allowed_tags:
-                    cleaned_token = re.sub(r'[^\w\s]', '', token).strip()
-                    if cleaned_token:
-                        final_tokens.append(cleaned_token)
-            
-            # Second pass: Inject high-precision keywords from AI entities
-            if entities:
-                for key, val in entities.items():
-                    if isinstance(val, str) and val.strip():
-                        # We trust AI entities more, so we add them as is
-                        final_tokens.append(val.strip())
-                    elif isinstance(val, list):
-                        final_tokens.extend([v.strip() for v in val if isinstance(v, str)])
-            
-            # Clean entities for matching
-            topic_entity = entities.get("topic", "") if entities else ""
-            title_entity = entities.get("book_title", "") if entities else ""
-            
-            # Use unique tokens for TS query
-            ts_query = " ".join(list(set(final_tokens)))
-            if not ts_query.strip():
-                ts_query = "sách"
-            
-            # Collect and join entities for phrase matching
-            phrase_query = ""
-            if entities:
-                phrase_query = " ".join([v for v in entities.values() if isinstance(v, str)])
-            
-            # Exact match pattern
             params = {
                 "query_vec": vec_str,
-                "query_text_ts": ts_query,
-                "query_text_phrase": phrase_query or query_text, # Precise phrase matching
-                "query_text": query_text,
-                "query_text_exact": f"%{query_text}%",
-                "topic_exact": f"%{topic_entity}%" if topic_entity else "",
+                "fts_query": fts_query_str,
+                "exact_match": f"%{query_text}%",
+                "topic_exact": f"%{topic_entity}%" if topic_entity else f"%{query_text}%",
+                "lang_kw": f"%{target_lang_keyword}%" if target_lang_keyword else "",
+                "lang_boost": lang_boost,
+                "intent": intent,
                 "top_k": top_k
             }
 
@@ -240,12 +219,13 @@ class RAGService:
                     "similarity": round(float(row["final_score"]), 4),
                 })
             
-            logger.info(f"Hybrid book search '{query_text}' → {len(books)} results")
+            logger.info(f"Hybrid Pro-Max Search '{query_text}' -> {len(books)} results (FTS: {fts_query_str})")
             return books
         except Exception as e:
-            logger.error(f"Hybrid book search failed: {e}")
+            logger.error(f"Hybrid search failed: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
             await db.rollback()
-            # Fallback to pure semantic if RRF fails
             return await self.search_books_semantic(db, query_embedding, top_k)
 
     async def search_policy(
@@ -254,17 +234,6 @@ class RAGService:
         query_embedding: List[float],
         top_k: int = 3,
     ) -> List[Dict[str, Any]]:
-        """
-        Search library policy chunks by vector similarity.
-        
-        Args:
-            db: Database session
-            query_embedding: 1024-dim query embedding
-            top_k: Maximum chunks to retrieve
-            
-        Returns:
-            List of policy chunk dicts
-        """
         try:
             sql = text("""
                 SELECT 
@@ -288,20 +257,17 @@ class RAGService:
                     "section": row["section_title"] or "",
                     "similarity": round(float(row["similarity"]), 3),
                 })
-            
-            logger.info(f"Policy search → {len(chunks)} chunks retrieved")
             return chunks
         except Exception as e:
             logger.error(f"Policy search failed: {e}")
-            await db.rollback()  # Reset transaction state
+            await db.rollback()
             return []
 
     def format_books_for_context(self, books: List[Dict[str, Any]]) -> str:
-        """Format book list into readable context string for LLM prompt."""
         if not books:
             return "Không tìm thấy sách phù hợp trong hệ thống."
 
-        lines = ["| STT | Tên sách | Tác giả | Trạng thái | Chi tiết mượn |\n|:---:|:---|:---|:---|:---|"]
+        lines = ["| STT | Tên sách | Tác giả | Thể loại | Mô tả | Trạng thái | Chi tiết mượn |\n|:---:|:---|:---|:---|:---|:---|:---|"]
         for i, b in enumerate(books, 1):
             status_map = {
                 "AVAILABLE": "✅ Sẵn sàng",
@@ -317,23 +283,23 @@ class RAGService:
                 borrow_info = f"Hạn trả: {b['due_date']}"
                 if b["days_overdue"] > 0:
                     borrow_info += f" (🚨 Quá hạn {b['days_overdue']} ngày)"
-            elif b["status"] == "RESERVED":
-                borrow_info = "Đang chờ sinh viên khác lấy sách"
-
+            
+            # Shorten description for context
+            desc = b["description"] or "Không có mô tả"
+            if len(desc) > 120:
+                desc = desc[:117] + "..."
+            
+            category = b["category"] or "Chưa phân loại"
+            
             lines.append(
-                f"| {i} | **{b['title']}** | {b['author']} | {status_str} | {borrow_info} |"
+                f"| {i} | **{b['title']}** | {b['author']} | {category} | {desc} | {status_str} | {borrow_info} |"
             )
         return "\n".join(lines)
 
     def format_policy_for_context(self, chunks: List[Dict[str, Any]]) -> str:
-        """Format policy chunks into readable context string for LLM prompt."""
         if not chunks:
             return "Không tìm thấy thông tin quy định liên quan."
-
-        parts = []
-        for chunk in chunks:
-            parts.append(chunk["text"])
-        return "\n\n---\n\n".join(parts)
+        return "\n\n---\n\n".join([c["text"] for c in chunks])
 
 
 # Singleton instance

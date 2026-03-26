@@ -99,7 +99,6 @@ class Transaction(Base):
     
     # Renewal tracking — max 1 renewal per borrow
     renewal_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-
     # Notes
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     

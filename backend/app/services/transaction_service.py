@@ -566,6 +566,5 @@ class TransactionService:
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
-
 # Singleton instance
 transaction_service = TransactionService()

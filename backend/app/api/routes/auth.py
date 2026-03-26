@@ -58,15 +58,16 @@ async def verify_face(
         if img is None:
             raise HTTPException(status_code=400, detail="Invalid image format")
             
-        # Decode all frames for rPPG
-        frames = []
-        for f in images:
+        # Decode all frames concurrently to improve processing speed (20-40ms target)
+        async def _decode_frame(f):
             await f.seek(0)
             c = await f.read()
             arr = np.frombuffer(c, np.uint8)
-            decoded = cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            if decoded is not None:
-                frames.append(decoded)
+            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+        decoded_frames = await asyncio.gather(*[_decode_frame(f) for f in images])
+        frames = [f for f in decoded_frames if f is not None]
+
         
         # Authenticate with quality check (P3-04: 15s timeout for ML inference)
         result = await asyncio.wait_for(

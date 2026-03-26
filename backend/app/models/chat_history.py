@@ -1,20 +1,27 @@
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID, TIMESTAMP
-from sqlalchemy.sql import func
+from datetime import datetime
 import uuid
+from typing import Optional, Any
+from sqlalchemy import String, Text, DateTime, JSON
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from pgvector.sqlalchemy import Vector
 from app.database import Base
 
 class ChatHistory(Base):
     """
-    SQLAlchemy model for the chat_history table.
-    Used for storing conversation context for RAG.
+    Model for storing chat interactions between users and the AI.
+    Used for conversation memory and semantic caching.
     """
     __tablename__ = "chat_history"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    session_id = Column(String(100), index=True, nullable=False)
-    student_id = Column(String(50), nullable=True, index=True)
-    role = Column(String(50), nullable=False)  # 'human', 'ai', 'system'
-    content = Column(Text, nullable=False)
-    extra_metadata = Column(JSON, nullable=True)     # Stores intent, sources, metrics, etc.
-    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    student_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    role: Mapped[str] = mapped_column(String(50), nullable=False) # 'human', 'ai', 'system'
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(768), nullable=True) # Updated to 768 for vietnamese-sbert
+    extra_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    def __repr__(self) -> str:
+        return f"<ChatHistory(id={self.id}, role={self.role}, session={self.session_id})>"

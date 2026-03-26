@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from app.services.rag_service import rag_service
@@ -20,7 +21,7 @@ async def test_search():
         if not emb:
             print("Embedding failed: Service returned None")
             return
-        print(f"Got embedding with dimension: {len(emb)}")
+        print(f"Got embedding with dimension: {len(emb)} (Expected: 768)")
     except Exception as e:
         print(f"Embedding service exception: {e}")
         return
@@ -60,7 +61,6 @@ async def test_search():
             print(f"Search book exception: {e}")
 
 if __name__ == "__main__":
-    import sys
     # Add project root to path for relative imports if needed
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     asyncio.run(test_search())
