@@ -169,7 +169,6 @@ async def get_student_borrowing_info(
 # ---------------------------------------------------------------------------
 # POST / — create student
 # ---------------------------------------------------------------------------
-
 @router.post("/", response_model=StudentResponse, status_code=201)
 async def create_student(
     student: StudentCreate,
@@ -363,7 +362,6 @@ async def clear_student_fine(
     student_id: str = Path(..., description="Student ID"),
     db: AsyncSession = Depends(get_db),
     _claims=Depends(require_admin_session)
-
 ):
     """
     Clear outstanding fine balance for a student (admin action).

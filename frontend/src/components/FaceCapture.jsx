@@ -1,4 +1,3 @@
-
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { FilesetResolver, FaceDetector } from '@mediapipe/tasks-vision'
 import { API_URL } from '../config'

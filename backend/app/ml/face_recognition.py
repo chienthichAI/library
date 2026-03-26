@@ -140,17 +140,7 @@ class FaceRecognizer:
             
             elif self.model_path and Path(self.model_path).exists() and ONNX_AVAILABLE:
                 # Load custom standalone ONNX model
-                providers = [
-                    ('TensorrtExecutionProvider', {
-                        'device_id': 0,
-                        'trt_engine_cache_enable': True,
-                        'trt_engine_cache_path': str(Path(self.model_path).parent),
-                        'trt_fp16_enable': True,
-                        'trt_max_workspace_size': 2147483648,
-                    }),
-                    'CUDAExecutionProvider',
-                    'CPUExecutionProvider'
-                ] if self.use_gpu else ['CPUExecutionProvider']
+                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.use_gpu else ['CPUExecutionProvider']
                 self._session = ort.InferenceSession(self.model_path, providers=providers)
                 logger.info(f"Loaded standalone ArcFace model from: {self.model_path}")
                 
@@ -198,17 +188,21 @@ class FaceRecognizer:
             if aligned_face.shape[:2] != (112, 112):
                 aligned_face = cv2.resize(aligned_face, (112, 112))
             
-            # Preprocessing priorities:
-            # 1. InsightFace models (built-in preprocessing)
-            # 2. Standalone ONNX session (manual CLAHE + normalization)
+            # Only use CLAHE for standalone ONNX models. 
+            # InsightFace models have built-in optimal preprocessing.
             if self._rec_model is not None:
                 embedding = self._run_insightface_inference(aligned_face)
             elif self._session is not None:
                 aligned_face = self._apply_clahe(aligned_face)
                 embedding = self._run_onnx_inference(aligned_face)
             else:
-                # Fallback to mock embedding for dev/testing only
-                embedding = self._mock_embedding(aligned_face)
+                logger.error("Face recognizer model unavailable during inference")
+                return FaceEmbeddingResult(
+                    embedding=np.zeros(self.embedding_dim, dtype=np.float32),
+                    confidence=0.0,
+                    is_valid=False
+                )
+                
             # L2 normalize properly
             norm = np.linalg.norm(embedding)
             if abs(norm - 1.0) > 0.01:
@@ -229,14 +223,16 @@ class FaceRecognizer:
             )
     
     def _run_onnx_inference(self, face: np.ndarray) -> np.ndarray:
-        # InsightFace equivalent preprocessing: 
-        # Scale=1.0/127.5, Mean=(127.5, 127.5, 127.5), SwapRB=True
-        blob = cv2.dnn.blobFromImages(
-            [face], 1.0 / 127.5, (112, 112),
-            (127.5, 127.5, 127.5), swapRB=True
-        )
+        """Run inference using ONNX Runtime."""
+        # Preprocess: HWC -> CHW, normalize
+        face = face.astype(np.float32)
+        face = (face - 127.5) / 127.5  # Normalize to [-1, 1]
+        face = face.transpose(2, 0, 1)  # HWC -> CHW
+        face = np.expand_dims(face, axis=0)  # Add batch dimension
+        
         input_name = self._session.get_inputs()[0].name
-        output = self._session.run(None, {input_name: blob})
+        output = self._session.run(None, {input_name: face})
+        
         return output[0].flatten()
     
     def _run_insightface_inference(self, face: np.ndarray) -> np.ndarray:
@@ -246,32 +242,8 @@ class FaceRecognizer:
             embedding = self._rec_model.get_feat(face)
             return embedding.flatten()
             
-    def _mock_embedding(self, face: np.ndarray) -> np.ndarray:
-        """
-        Generate mock embedding for testing.
-        Uses image features to create reproducible embeddings.
-        """
-        if face is None:
-            return np.zeros(self.embedding_dim, dtype=np.float32)
-            
-        # Create deterministic embedding from image
-        gray = cv2.cvtColor(face, cv2.COLOR_RGB2GRAY) if len(face.shape) == 3 else face
-        resized = cv2.resize(gray, (16, 32))  # 512 pixels
-        
-        # Normalize to create embedding
-        embedding = resized.flatten().astype(np.float32)
-        # Safe normalization to avoid broadcasting errors
-        mean_val = np.mean(embedding)
-        std_val = np.std(embedding) + 1e-6
-        embedding = (embedding - mean_val) / std_val
-        
-        # Ensure 512 dimensions
-        if len(embedding) < self.embedding_dim:
-            embedding = np.pad(embedding, (0, self.embedding_dim - len(embedding)))
-        else:
-            embedding = embedding[:self.embedding_dim]
-            
-        return embedding
+        logger.error("InsightFace recognizer is unavailable")
+        return np.zeros(self.embedding_dim, dtype=np.float32)
     
     def compare_embeddings(
         self,

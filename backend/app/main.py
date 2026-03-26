@@ -12,27 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 import asyncio
 import sys
-import os
-
-# Fix for pyzbar on Windows with Python 3.8+
-if os.name == 'nt' and sys.version_info >= (3, 8):
-    from pathlib import Path
-    import ctypes
-    try:
-        for p in sys.path:
-            pyzbar_path = Path(p) / "pyzbar"
-            if pyzbar_path.exists() and pyzbar_path.is_dir():
-                os.add_dll_directory(str(pyzbar_path))
-                # Explicitly preload DLLs to prevent conflicts with subsequent heavy imports like CV2/Torch
-                ctypes.CDLL(str(pyzbar_path / "libiconv.dll"))
-                ctypes.CDLL(str(pyzbar_path / "libzbar-64.dll"))
-                break
-    except Exception:
-        pass
 
 from app.config import settings
 from app.database import init_db, close_db
-from app.api.routes import auth, books, transactions, students, assistant, chatbot
+from app.api.routes import auth, books, transactions, students, assistant
 from app.core.ml_container import init_ai_models, AIModels
 
 
@@ -113,16 +96,14 @@ async def lifespan(app: FastAPI):
         raise e
     finally:
         logger.info("SmartLib Kiosk Backend shutting down.")
+        
         # Close LLM and Embedding clients
-        try:
-            from app.services.llm_service import ai_chat_assistant, ai_intent_classifier
-            from app.services.embedding_service import embedding_service
-            await ai_chat_assistant.close()
-            await ai_intent_classifier.close()
-            await embedding_service.close()
-        except:
-            pass
-
+        from app.services.llm_service import ai_chat_assistant, ai_intent_classifier
+        from app.services.embedding_service import embedding_service
+        await ai_chat_assistant.close()
+        await ai_intent_classifier.close()
+        await embedding_service.close()
+        
         await close_db()
     logger.info("Database connection closed")
 
@@ -177,8 +158,6 @@ app.include_router(books.router, prefix=API_PREFIX)
 app.include_router(transactions.router, prefix=API_PREFIX)
 app.include_router(students.router, prefix=API_PREFIX)
 app.include_router(assistant.router, prefix=API_PREFIX)
-app.include_router(chatbot.router, prefix="/api/chatbot")
-
 
 
 @app.get("/", tags=["Root"])

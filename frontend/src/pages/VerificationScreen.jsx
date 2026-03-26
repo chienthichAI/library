@@ -130,10 +130,6 @@ export default function VerificationScreen() {
                 setVerificationStatus('success')
                 setFaceStatus('valid')
                 setStatusMessage("Xác thực thành công!")
-                
-                // Store student info for Global Chatbot access
-                sessionStorage.setItem('smartlib_student_id', student.id);
-                sessionStorage.setItem('smartlib_student_name', student.name);
                 if (trackingLoopRef.current) {
                     cancelAnimationFrame(trackingLoopRef.current)
                     trackingLoopRef.current = null
@@ -585,3 +581,4 @@ export default function VerificationScreen() {
         </div>
     )
 }
+

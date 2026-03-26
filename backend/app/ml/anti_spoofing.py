@@ -208,19 +208,9 @@ class AntiSpoofing:
             
         try:
             if self.model_path and Path(self.model_path).exists() and ONNX_AVAILABLE:
-                providers = [
-                    ('TensorrtExecutionProvider', {
-                        'device_id': 0,
-                        'trt_engine_cache_enable': True,
-                        'trt_engine_cache_path': str(Path(self.model_path).parent),
-                        'trt_fp16_enable': True,
-                        'trt_max_workspace_size': 2147483648,
-                    }),
-                    'CUDAExecutionProvider',
-                    'CPUExecutionProvider'
-                ] if self.use_gpu else ['CPUExecutionProvider']
+                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider'] if self.use_gpu else ['CPUExecutionProvider']
                 self._session = ort.InferenceSession(self.model_path, providers=providers)
-                logger.info(f"Loaded anti-spoofing model from: {self.model_path} with providers {providers[0] if self.use_gpu else 'CPU'}")
+                logger.info(f"Loaded anti-spoofing model from: {self.model_path}")
             else:
                 raise FileNotFoundError(
                     f"Anti-spoofing model không tìm thấy tại {self.model_path}. "

@@ -78,7 +78,6 @@ class BookResponse(BaseModel):
         from_attributes = True
 
 
-
 class BookIdentificationResponse(BaseModel):
     """Schema for book identification result."""
     success: bool

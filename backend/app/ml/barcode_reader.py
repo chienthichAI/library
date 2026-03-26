@@ -18,9 +18,9 @@ try:
     from pyzbar import pyzbar
     from pyzbar.pyzbar import ZBarSymbol
     PYZBAR_AVAILABLE = True
-except Exception as e:
+except ImportError:
     PYZBAR_AVAILABLE = False
-    logger.warning(f"pyzbar could not be loaded (DLLs might be missing): {e}")
+    logger.warning("pyzbar not available. Barcode reading disabled.")
 
 
 @dataclass
@@ -34,10 +34,9 @@ class BarcodeResult:
     @property
     def is_isbn(self) -> bool:
         """Check if barcode is an ISBN."""
-        # Accepts EAN13 (common for ISBN) and strings starting with 978/979
         return (
-            self.barcode_type in ["EAN13", "EAN-13", "UPC", "UPCA", "ISBN"] and 
-            (self.data.startswith("978") or self.data.startswith("979") or len(self.data) >= 10)
+            self.barcode_type in ["EAN13", "EAN-13"] and 
+            (self.data.startswith("978") or self.data.startswith("979"))
         )
     
     @property
@@ -50,12 +49,11 @@ class BarcodeResult:
 
 class BarcodeReader:
     """
-    Barcode reader using pyzbar/ZXing with image preprocessing.
-    Falls back to OpenCV BarcodeDetector if pyzbar DLLs are missing.
+    Barcode reader using pyzbar/ZXing.
     
     Features:
     - Multi-format support (1D and 2D)
-    - Image preprocessing (CLAHE, Otsu, Adaptive, Sharpening)
+    - Image preprocessing for better detection
     - Confidence scoring based on image quality
     """
     
@@ -71,15 +69,6 @@ class BarcodeReader:
             "EAN13", "EAN8", "CODE128", "CODE39", "QRCODE"
         ]
         self._symbol_types = self._get_symbol_types()
-        
-        # Fallback detector
-        self.cv2_barcode_detector = None
-        if not PYZBAR_AVAILABLE:
-            try:
-                self.cv2_barcode_detector = cv2.barcode.BarcodeDetector()
-                logger.info("Using OpenCV BarcodeDetector as fallback.")
-            except AttributeError:
-                logger.warning("cv2.barcode not available. Barcode reading will be disabled.")
         
     def _get_symbol_types(self) -> Optional[List]:
         """Get pyzbar symbol types for filtering."""
@@ -112,13 +101,11 @@ class BarcodeReader:
         Returns:
             List of BarcodeResult objects
         """
-        if image is None or image.size == 0:
-            return []
-
         if not PYZBAR_AVAILABLE:
-            if self.cv2_barcode_detector:
-                return self._read_with_cv2(image)
-            logger.warning("No barcode engines available.")
+            logger.warning("pyzbar not available")
+            return []
+            
+        if image is None or image.size == 0:
             return []
             
         results = []
@@ -152,7 +139,7 @@ class BarcodeReader:
                         confidence=confidence
                     )
                     
-                    # Avoid duplicates or keep best confidence
+                    # Avoid duplicates
                     existing_idx = next((i for i, r in enumerate(results) if r.data == data), None)
                     if existing_idx is None:
                         results.append(result)
@@ -165,43 +152,11 @@ class BarcodeReader:
                 
         return results
     
-    def _read_with_cv2(self, image: np.ndarray) -> List[BarcodeResult]:
-        """Fallback reading using OpenCV BarcodeDetector."""
-        if not self.cv2_barcode_detector:
-            return []
-            
-        results = []
-        # BarcodeDetector.detectAndDecode returns (ret, decoded_info, points, type)
-        try:
-            ret, decoded_info, points, types = self.cv2_barcode_detector.detectAndDecode(image)
-            
-            if ret:
-                for i in range(len(decoded_info)):
-                    data = decoded_info[i].strip()
-                    if not data:
-                        continue
-                        
-                    # OpenCV points are (4, 2)
-                    pts = points[i].astype(int)
-                    x = int(np.min(pts[:, 0]))
-                    y = int(np.min(pts[:, 1]))
-                    w = int(np.max(pts[:, 0]) - x)
-                    h = int(np.max(pts[:, 1]) - y)
-                    
-                    results.append(BarcodeResult(
-                        data=data,
-                        barcode_type=str(types[i]),
-                        bbox=(x, y, w, h),
-                        confidence=0.9  # Fixed confidence for CV2
-                    ))
-        except Exception as e:
-            logger.debug(f"OpenCV barcode decode error: {e}")
-            
-        return results
-
     def _preprocess(self, image: np.ndarray) -> List[np.ndarray]:
         """
         Apply multiple preprocessing methods for better detection.
+        
+        Returns list of preprocessed images to try.
         """
         preprocessed = []
         
@@ -262,6 +217,12 @@ class BarcodeReader:
     def read_isbn(self, image: np.ndarray) -> Optional[str]:
         """
         Read ISBN from image.
+        
+        Args:
+            image: Book image
+            
+        Returns:
+            ISBN string or None
         """
         results = self.read(image)
         
@@ -271,7 +232,7 @@ class BarcodeReader:
                 
         # Check for any EAN-13 that might be ISBN
         for result in results:
-            if result.barcode_type in ["EAN13", "EAN-13", "UPC", "UPCA"]:
+            if result.barcode_type in ["EAN13", "EAN-13"]:
                 return result.data
                 
         return None

@@ -9,18 +9,20 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import httpx
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 # Import config and models
 from app.config import settings
 from app.models.policy_chunk import PolicyChunk
-from app.rag.embeddings import EmbeddingsService
 
 
 # === Configuration ===
 POLICY_PATH = Path(__file__).parent.parent / "library_policy.md"
-CHUNK_SIZE = 512  # SBERT works better with smaller chunks
+OLLAMA_URL = "http://localhost:11434"
+EMBED_MODEL = "bge-m3"
+CHUNK_SIZE = 600  # Max chars per chunk
 
 
 def load_policy_text(filepath: Path) -> str:
@@ -74,9 +76,23 @@ def chunk_by_section(text: str, max_chunk_size: int = CHUNK_SIZE) -> list[dict]:
     return chunks
 
 
+async def embed_text(client: httpx.AsyncClient, text: str) -> list[float] | None:
+    try:
+        response = await client.post(
+            f"{OLLAMA_URL}/api/embeddings",
+            json={"model": EMBED_MODEL, "prompt": text},
+            timeout=30.0,
+        )
+        response.raise_for_status()
+        return response.json().get("embedding")
+    except Exception as e:
+        print(f"  ⚠️  Embedding failed: {e}")
+        return None
+
+
 async def main():
     print("=" * 60)
-    print("SmartLib - Library Policy Indexer (Standardized 768d)")
+    print("SmartLib - Library Policy Indexer (ORM)")
     print("=" * 60)
 
     # 1. Load policy file
@@ -87,32 +103,26 @@ async def main():
     chunks = chunk_by_section(policy_text)
     print(f"✂️  Created {len(chunks)} chunks")
 
-    # 3. Connection & Embeddings
+    # 3. Connection
     engine = create_async_engine(settings.database_url, echo=False)
     SessionMaker = async_sessionmaker(engine, expire_on_commit=False)
-    
-    print("\n⏳ Initializing Embedding Service (keepingitreal/vietnamese-sbert)...")
-    emb_model = EmbeddingsService.get_embeddings()
 
     # 4. Clear existing
     print(f"\n🗑️  Clearing existing policy chunks...")
     async with SessionMaker() as db:
-        await db.execute(delete(PolicyChunk)) # Clear all for clean re-index
+        await db.execute(delete(PolicyChunk).where(PolicyChunk.source == 'library_policy'))
         await db.commit()
 
     # 5. Embed and Index
     print(f"⚡ Indexing {len(chunks)} chunks...")
     success_count = 0
 
-    async with SessionMaker() as db:
-        for i, chunk_data in enumerate(chunks):
-            print(f"   [{i+1}/{len(chunks)}] {chunk_data['section_title'][:35]}...", end=" ")
-            
-            try:
-                # Use LangChain embed_query (sync) or aembed_query (async)
-                # HuggingFaceEmbeddings.embed_query is sync, but we wrap it
-                embedding = await asyncio.to_thread(emb_model.embed_query, chunk_data["chunk_text"])
+    async with httpx.AsyncClient() as client:
+        async with SessionMaker() as db:
+            for i, chunk_data in enumerate(chunks):
+                print(f"   [{i+1}/{len(chunks)}] {chunk_data['section_title'][:35]}...", end=" ")
                 
+                embedding = await embed_text(client, chunk_data["chunk_text"])
                 if embedding:
                     chunk = PolicyChunk(
                         chunk_text=chunk_data["chunk_text"],
@@ -123,18 +133,15 @@ async def main():
                     )
                     db.add(chunk)
                     success_count += 1
-                    print("✅ (768d)")
+                    print("✅")
                 else:
-                    print("❌ (No embedding)")
-            except Exception as e:
-                print(f"❌ (Error: {e})")
-        
-        await db.commit()
+                    print("❌ (Skip)")
+            
+            await db.commit()
 
-    print(f"\n🎉 Done! Indexed {success_count}/{len(chunks)} policy chunks with 768d vectors.")
+    print(f"\n🎉 Done! Indexed {success_count}/{len(chunks)} policy chunks.")
     await engine.dispose()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-

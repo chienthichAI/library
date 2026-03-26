@@ -1,17 +1,8 @@
-import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { chatApi } from '../services/chatbotApi'
 import './WelcomeScreen.css'
 
 export default function WelcomeScreen() {
     const navigate = useNavigate()
-
-    useEffect(() => {
-        // Clear student session on exit/welcome
-        sessionStorage.removeItem('smartlib_student_id');
-        sessionStorage.removeItem('smartlib_student_name');
-        chatApi.clearSession();
-    }, [])
 
     return (
         <div className="welcome-screen">

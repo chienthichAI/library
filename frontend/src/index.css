@@ -3,47 +3,45 @@
 /* SmartLib Kiosk - Global Styles */
 
 :root {
-  /* Colors - FPT Harmony Theme */
-  --primary-color: #F36F21;
-  /* FPT Orange */
-  --primary-dark: #d65d18;
-  --primary-light: #f78d4e;
-  --secondary-color: #3b82f6;
-  /* Kept blue as secondary for balance */
-  --accent-color: #10b981;
+  /* Colors */
+  --primary-color: #2563eb;
+  --primary-dark: #1e40af;
+  --primary-light: #3b82f6;
+  --secondary-color: #10b981;
+  --accent-color: #f59e0b;
   --danger-color: #ef4444;
   --success-color: #22c55e;
-
-  /* Neutrals - Deep Navy instead of slate */
-  --bg-primary: #0a1128;
-  --bg-secondary: #121f3d;
-  --bg-card: #1c2b54;
+  
+  /* Neutrals */
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --bg-card: #334155;
   --text-primary: #f8fafc;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
-
+  
   /* Gradients */
-  --gradient-primary: linear-gradient(135deg, #F36F21 0%, #d65d18 100%);
+  --gradient-primary: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
   --gradient-success: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  --gradient-dark: linear-gradient(180deg, #121f3d 0%, #0a1128 100%);
-
-  /* Shadows - Adjusted glow for orange */
+  --gradient-dark: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+  
+  /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 10px 15px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 20px rgba(243, 111, 33, 0.4);
-
+  --shadow-glow: 0 0 20px rgba(37, 99, 235, 0.5);
+  
   /* Borders */
   --border-radius-sm: 8px;
   --border-radius-md: 12px;
   --border-radius-lg: 20px;
   --border-radius-full: 9999px;
-
+  
   /* Transitions */
   --transition-fast: 150ms ease;
   --transition-base: 250ms ease;
   --transition-slow: 400ms ease;
-
+  
   /* Font */
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
@@ -54,8 +52,7 @@
   box-sizing: border-box;
 }
 
-html,
-body {
+html, body {
   height: 100%;
   font-family: var(--font-family);
   background: var(--bg-primary);
@@ -173,15 +170,14 @@ p {
   color: var(--text-secondary);
 }
 
-
 /* --- Markdown Content Styling (Premium) --- */
 .prose {
-  color: var(--text-secondary);
+  color: #4b5563;
   line-height: 1.6;
 }
 
 .prose strong {
-  color: var(--primary-color);
+  color: #4f46e5;
   font-weight: 600;
 }
 
@@ -193,20 +189,20 @@ p {
   font-size: 0.95rem;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: var(--shadow-md);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  border: 1px solid #e5e7eb;
 }
 
 .prose thead {
-  background: var(--bg-card);
-  border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-bottom: 2px solid #e2e8f0;
 }
 
 .prose th {
   padding: 12px 16px;
   text-align: left;
   font-weight: 700;
-  color: var(--text-primary);
+  color: #334155;
   text-transform: uppercase;
   font-size: 0.75rem;
   letter-spacing: 0.05em;
@@ -214,9 +210,9 @@ p {
 
 .prose td {
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid #f1f5f9;
   vertical-align: middle;
-  color: var(--text-primary);
+  color: #475569;
 }
 
 .prose tr:last-child td {
@@ -224,7 +220,7 @@ p {
 }
 
 .prose tr:hover td {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: #f8fafc;
 }
 
 /* Mobile-friendly horizontal scroll for tables */
@@ -233,6 +229,7 @@ p {
   word-wrap: break-word;
   overflow-x: auto; /* Allow horizontal scroll for tables */
 }
+
 .form-input {
   width: 100%;
   padding: 14px 16px;
@@ -269,49 +266,23 @@ p {
 
 /* Animations */
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes pulse {
-
-  0%,
-  100% {
-    transform: scale(1);
-  }
-
-  50% {
-    transform: scale(1.05);
-  }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
 }
 
 @keyframes spin {
-  from {
-    transform: rotate(0deg);
-  }
-
-  to {
-    transform: rotate(360deg);
-  }
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 @keyframes glow {
-
-  0%,
-  100% {
-    box-shadow: 0 0 20px rgba(243, 111, 33, 0.5);
-  }
-
-  50% {
-    box-shadow: 0 0 40px rgba(243, 111, 33, 0.8);
-  }
+  0%, 100% { box-shadow: 0 0 20px rgba(37, 99, 235, 0.5); }
+  50% { box-shadow: 0 0 40px rgba(37, 99, 235, 0.8); }
 }
 
 .animate-fade-in {

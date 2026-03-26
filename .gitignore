@@ -38,28 +38,3 @@ Thumbs.db
 
 # Project specific
 backend/cache/
-backend/models/**/*.engine
-
-# Large ML Models
-*.gguf
-Modelfile*
-
-# Environments and Secrets
-.env
-
-# Temporary and Build Files
-**/tmp/
-**/__pycache__/
-*.pyc
-
-# Node modules
-node_modules/
-
-# Large text/log files
-*.txt
-*.log
-
-# Agent & Kits
-.agent/
-antigravity-kit/
-.vscode/
