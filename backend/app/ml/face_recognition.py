@@ -139,6 +139,11 @@ class FaceRecognizer:
                     logger.info("FaceRecognizer hitched to existing FaceAnalysis instance")
             
             elif self.model_path and Path(self.model_path).exists() and ONNX_AVAILABLE:
+                # Check for Git LFS placeholder (usually < 1000 bytes)
+                if Path(self.model_path).stat().st_size < 1000:
+                    logger.warning(f"Face recognition model file {self.model_path} looks like an LFS placeholder (too small).")
+                    return False
+
                 # Load custom standalone ONNX model
                 providers = [
                     ('TensorrtExecutionProvider', {

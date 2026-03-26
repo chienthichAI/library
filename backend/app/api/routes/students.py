@@ -173,8 +173,7 @@ async def get_student_borrowing_info(
 @router.post("/", response_model=StudentResponse, status_code=201)
 async def create_student(
     student: StudentCreate,
-    db: AsyncSession = Depends(get_db),
-    _claims=Depends(require_admin_session)
+    db: AsyncSession = Depends(get_db)
 ):
     """Create a new student account."""
     try:

@@ -70,6 +70,7 @@ class LlmService:
                 "temperature": temperature,
                 "top_p": top_p,
                 "num_predict": num_predict or 1024,
+                **({"num_ctx": num_ctx} if num_ctx else {}),
             }
         }
         if format:

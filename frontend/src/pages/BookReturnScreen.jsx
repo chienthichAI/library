@@ -322,8 +322,8 @@ export default function BookReturnScreen() {
     return (
         <div className="book-return-screen">
             <header className="book-header">
-                <button className="back-btn" onClick={() => navigate('/')}>
-                    ← Trang chủ
+                <button className="back-btn" onClick={() => navigate('/student', { state: { student } })}>
+                    ← Dashboard
                 </button>
                 <div className="student-info-bar">
                     <div className="security-cam-mini">
@@ -496,8 +496,8 @@ export default function BookReturnScreen() {
                                 <button className="btn btn-primary btn-large" onClick={handleReset}>
                                     Mượn/Trả sách khác
                                 </button>
-                                <button className="btn btn-secondary" onClick={() => navigate('/')}>
-                                    Về trang chủ
+                                <button className="btn btn-secondary" onClick={() => navigate('/student', { state: { student } })}>
+                                    Về Dashboard
                                 </button>
                             </div>
                         </div>

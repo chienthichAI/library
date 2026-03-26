@@ -14,7 +14,7 @@ class PolicyChunk(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(768), nullable=True) # Updated to 768 for vietnamese-sbert
+    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(1024), nullable=True) # Updated to 1024 for AITeamVN
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     section_title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

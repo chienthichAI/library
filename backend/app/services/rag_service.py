@@ -7,6 +7,7 @@ from cachetools import TTLCache
 from underthesea import word_tokenize, pos_tag
 import re
 
+from app.services.rerank_service import reranking_service
 from app.models.student import Student
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,6 +59,8 @@ class RAGService:
                     "publisher": row["publisher"] or "",
                     "publication_year": row["publication_year"],
                     "language": row["language"] or "vi",
+                    "due_date": str(row["due_date"]) if row["due_date"] else None,
+                    "days_overdue": row["days_overdue"] or 0,
                     "similarity": round(float(row["similarity"]), 3),
                 })
             return books
@@ -185,9 +188,12 @@ class RAGService:
                    OR e.book_id IS NOT NULL
                    OR (b.title ILIKE :topic_exact AND :topic_exact != '')
                 ORDER BY final_score DESC
-                LIMIT :top_k
+                LIMIT :initial_k
             """)
             
+            # Use extra initial k for reranking (e.g., 20)
+            initial_k = 20 if top_k < 20 else top_k + 5
+
             params = {
                 "query_vec": vec_str,
                 "fts_query": fts_query_str,
@@ -196,7 +202,7 @@ class RAGService:
                 "lang_kw": f"%{target_lang_keyword}%" if target_lang_keyword else "",
                 "lang_boost": lang_boost,
                 "intent": intent,
-                "top_k": top_k
+                "initial_k": initial_k
             }
 
             result = await db.execute(sql, params)
@@ -219,7 +225,12 @@ class RAGService:
                     "similarity": round(float(row["final_score"]), 4),
                 })
             
-            logger.info(f"Hybrid Pro-Max Search '{query_text}' -> {len(books)} results (FTS: {fts_query_str})")
+            # --- Stage 2: Reranking (Option C) ---
+            if books and len(books) > 1:
+                logger.debug(f"[RAG] Reranking {len(books)} candidates with Vietnamese_Reranker...")
+                books = await reranking_service.rerank_books(query_text, books, limit=top_k)
+
+            logger.info(f"Hybrid Reranked Search '{query_text}' -> {len(books)} results (FTS: {fts_query_str})")
             return books
         except Exception as e:
             logger.error(f"Hybrid search failed: {e}")
@@ -231,6 +242,7 @@ class RAGService:
     async def search_policy(
         self,
         db: AsyncSession,
+        query_text: str,
         query_embedding: List[float],
         top_k: int = 3,
     ) -> List[Dict[str, Any]]:
@@ -245,8 +257,9 @@ class RAGService:
                 LIMIT :top_k
             """)
 
+            initial_k = 10 if top_k < 10 else top_k + 3
             vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
-            result = await db.execute(sql, {"query_vec": vec_str, "top_k": top_k})
+            result = await db.execute(sql, {"query_vec": vec_str, "top_k": initial_k})
             rows = result.mappings().all()
 
             chunks = []
@@ -257,6 +270,12 @@ class RAGService:
                     "section": row["section_title"] or "",
                     "similarity": round(float(row["similarity"]), 3),
                 })
+
+            # --- Stage 2: Reranking ---
+            if chunks and len(chunks) > 1:
+                logger.debug(f"[RAG] Reranking {len(chunks)} policy chunks...")
+                chunks = await reranking_service.rerank_policies(query_text, chunks, limit=top_k)
+            
             return chunks
         except Exception as e:
             logger.error(f"Policy search failed: {e}")

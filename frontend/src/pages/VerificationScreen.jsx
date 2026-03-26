@@ -134,6 +134,7 @@ export default function VerificationScreen() {
                 // Store student info for Global Chatbot access
                 sessionStorage.setItem('smartlib_student_id', student.id);
                 sessionStorage.setItem('smartlib_student_name', student.name);
+                sessionStorage.setItem('smartlib_verification_token', student.verification_token);
                 if (trackingLoopRef.current) {
                     cancelAnimationFrame(trackingLoopRef.current)
                     trackingLoopRef.current = null
@@ -143,7 +144,7 @@ export default function VerificationScreen() {
                     if (student.role === 'ADMIN') {
                         navigate('/admin', { state: { admin: student } })
                     } else {
-                        navigate('/return', { state: { student } })
+                        navigate('/student', { state: { student } })
                     }
                 }, 3000)
             } else if (result.status === "no_face_detected" || result.status === "no_prominent_face") {
@@ -374,7 +375,7 @@ export default function VerificationScreen() {
         if (verifiedStudent.role === 'ADMIN') {
             navigate('/admin', { state: { admin: verifiedStudent } })
         } else {
-            navigate('/return', { state: { student: verifiedStudent } })
+            navigate('/student', { state: { student: verifiedStudent } })
         }
     }
 
@@ -554,7 +555,7 @@ export default function VerificationScreen() {
 
                         <div style={{ marginTop: '32px' }}>
                             <button className="btn btn-success btn-large" onClick={handleProceed} style={{ width: '100%', borderRadius: '100px', fontSize: '1.2rem', padding: '20px', boxShadow: '0 8px 24px rgba(34, 197, 94, 0.4)' }}>
-                                {verifiedStudent.role === 'ADMIN' ? 'Truy Cập Quản Trị Hệ Thống' : 'Tiếp Tục Mượn/Trả Sách'}
+                                {verifiedStudent.role === 'ADMIN' ? 'Truy Cập Quản Trị Hệ Thống' : 'Truy Cập Dashboard Sinh Viên'}
                                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginLeft: '12px' }}>
                                     <path strokeLinecap="round" strokeLinejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3" />
                                 </svg>

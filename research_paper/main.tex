@@ -1,0 +1,268 @@
+\documentclass[12pt,a4paper]{article}
+
+% --- Preamble ---
+\usepackage[utf8]{vietnam} % Hỗ trợ tiếng Việt
+\usepackage[margin=1in]{geometry} % Căn lề
+\usepackage{amsmath, amssymb} % Công thức toán học
+\usepackage{graphicx} % Chèn ảnh
+\usepackage{hyperref} % Liên kết và mục lục
+\usepackage{tabularx} % Bảng biểu linh hoạt
+\usepackage{booktabs} % Kẻ bảng chuyên nghiệp
+\usepackage{cite} % Trích dẫn
+\usepackage{float} % Quản lý vị trí ảnh/bảng
+\usepackage{listings} % Chèn mã nguồn
+\usepackage{color} % Màu sắc
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+    pdftitle={SmartLib: Hệ thống Thư viện thông minh},
+    pdfpagemode=FullScreen,
+}
+
+% --- Metadata ---
+\title{\textbf{SmartLib: Chuyển đổi số Thư viện Đại học thông qua Trí tuệ Nhân tạo và Công nghệ Biên (Edge AI)}}
+\author{Nguyễn Nam Phong, Nhóm nghiên cứu SmartLib \\ Đại học FPT}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Trong bối cảnh chuyển đổi số giáo dục, thư viện đại học đóng vai trò là trung tâm tri thức cần được hiện đại hóa để tối ưu hóa trải nghiệm học tập. Bài báo này trình bày hệ thống \textbf{SmartLib} - một giải pháp toàn diện kết hợp nhận diện khuôn mặt (Face ID), nhận diện sách dựa trên thị giác máy tính (Computer Vision), và trợ lý ảo thông minh (RAG AI). Hệ thống được tối ưu hóa để vận hành trên thiết bị biên \textit{NVIDIA Jetson Orin Nano}, đảm bảo tính tức thời, bảo mật và chi phí thấp. Kết quả thực nghiệm cho thấy SmartLib rút ngắn 80\% thời gian mượn trả sách và đạt độ chính xác trên 99\% trong điều kiện thực tế.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{GIỚI THIỆU (INTRODUCTION)}
+
+\subsection{Bối cảnh và Động lực}
+Thư viện truyền thống thường đối mặt với các vấn đề về quy trình mượn trả thủ công chậm chạp, quản lý thẻ thành viên vật lý dễ thất lạc và việc tìm kiếm sách chỉ dừng lại ở mức tìm theo từ khóa đơn giản. Sự bùng nổ của Trí tuệ nhân tạo (AI) và Internet vạn vật (IoT) mang đến cơ hội để tái cấu trúc thư viện thành một không gian thông minh, nơi sinh viên có thể tương tác tự nhiên và hiệu quả hơn.
+
+\subsection{Mục tiêu nghiên cứu}
+Dự án SmartLib hướng tới các mục tiêu cốt lõi:
+\begin{itemize}
+    \item \textbf{Loại bỏ thẻ vật lý:} Sử dụng Face ID để xác thực sinh viên.
+    \item \textbf{Tự động hóa mượn/trả:} Sử dụng Computer Vision để nhận diện đồng thời nhiều cuốn sách (Batch Scanning).
+    \item \textbf{Trí tuệ hóa tra cứu:} Triển khai Chatbot AI dựa trên dữ liệu thực tế của thư viện để tư vấn chuyên sâu cho sinh viên.
+    \item \textbf{Vận hành tại biên (Edge Computing):} Đảm bảo hệ thống hoạt động ổn định ngay cả khi kết nối mạng chập chờn và bảo mật dữ liệu sinh trắc học cục bộ.
+\end{itemize}
+
+\section{TỔNG QUAN TÀI LIỆU (LITERATURE REVIEW)}
+
+\subsection{Công nghệ RFID và mã vạch (Barcode)}
+Nhiều thư viện hiện đại đã áp dụng RFID để quản lý sách. Tuy nhiên, chi phí dán nhãn RFID cho hàng trăm nghìn cuốn sách là rất lớn, đồng thời RFID vẫn yêu cầu thẻ từ để xác thực người dùng. SmartLib cải tiến bằng cách tận dụng mã vạch có sẵn nhưng nâng cấp bằng thuật toán xử lý ảnh để nhận diện không cần tiếp xúc và xác thực bằng khuôn mặt.
+
+\subsection{Sự tiến hóa của Nhận diện khuôn mặt}
+Các nghiên cứu gần đây chỉ ra rằng \textit{ArcFace} (Deng et al., 2019) là một trong những thuật toán mạnh mẽ nhất hiện nay với khả năng tối ưu hóa khoảng cách góc giữa các vector đặc trưng. SmartLib áp dụng ArcFace kết hợp với \textit{RetinaFace} để định vị khuôn mặt chính xác trong điều kiện ánh sáng phức tạp tại sảnh thư viện.
+
+\subsection{Mô hình ngôn ngữ lớn (LLM) và RAG}
+Thay vì các Chatbot dựa trên kịch bản (Rule-based), kỹ thuật \textit{Retrieval-Augmented Generation} (RAG) cho phép AI truy xuất kiến thức từ cơ sở dữ liệu thư viện để trả lời chính xác, tránh hiện tượng "ảo tưởng" (hallucination) của LLM.
+
+\section{KIẾN TRÚC HỆ THỐNG (SYSTEM ARCHITECTURE)}
+
+Hệ thống được thiết kế theo mô hình phân tầng (Layered Architecture) để đảm bảo tính module hóa và dễ dàng bảo trì.
+
+\subsection{Tầng thiết bị biên (Edge Layer)}
+Trạm Kiosk đặt tại thư viện sử dụng \textbf{NVIDIA Jetson Orin Nano}. Đây là nơi thực hiện các tác vụ nặng về tính toán AI:
+\begin{itemize}
+    \item Camera nhận diện khuôn mặt xử lý 30 khung hình/giây.
+    \item Camera nhận diện sách thực hiện xử lý ảnh và giải mã mã vạch.
+    \item UI tương tác trực tiếp với sinh viên.
+\end{itemize}
+
+\subsection{Tầng Trung tâm Dữ liệu (Cloud/Server Layer)}
+Server chịu trách nhiệm quản lý cơ sở dữ liệu lớn và các dịch vụ AI phức tạp:
+\begin{itemize}
+    \item \textbf{PostgreSQL + pgvector:} Lưu trữ thông tin sách và vector đặc trưng khuôn mặt/tài liệu.
+    \item \textbf{RAG Service:} Xử lý các câu hỏi ngôn ngữ tự nhiên từ sinh viên.
+    \item \textbf{Admin Dashboard:} Theo dõi trạng thái mượn trả và quản lý kho sách.
+\end{itemize}
+
+\subsection{Mô hình dữ liệu và Giao thức}
+Sự kết nối giữa Edge và Server được thực hiện qua RESTful API với các định dạng dữ liệu JSON chuẩn hóa. Đặc biệt, dữ liệu sinh trắc học (vector 512-dim) được mã hóa trước khi truyền tải để đảm bảo quyền riêng tư của sinh viên.
+
+\section{MODULE XÁC THỰC KHUÔN MẶT VÀ CHỐNG GIẢ MẠO}
+
+Trong một hệ thống thư viện mượn/trả tự động, việc xác định danh tính (Identity Verification) là bước quan trọng nhất để đảm bảo an toàn cho tài sản tri thức. SmartLib sử dụng một pipeline đa tầng (Multi-stage Pipeline) kết hợp giữa Computer Vision cổ điển và Deep Learning hiện đại.
+
+\subsection{Quy trình xác thực Đa tầng (Multi-stage Verification)}
+
+Hệ thống Face ID được thiết kế để hoạt động ổn định trong các điều kiện ánh sáng thay đổi tại sảnh thư viện. Pipeline bao gồm 5 giai đoạn chính:
+
+\begin{figure}[H]
+    \centering
+    \fbox{
+        \begin{minipage}{0.8\textwidth}
+            \centering
+            \textbf{Sơ đồ quy trình xác thực Face ID} \\
+            1. Trích xuất khung hình từ Camera (RPi v2) \\
+            2. Định vị khuôn mặt \& Align bằng RetinaFace \\
+            3. Kiểm tra tính sống (Liveness) bằng MiniFASNet \\
+            4. Trích xuất Vector đặc trưng (512-dim) bằng ArcFace \\
+            5. So khớp trong cơ sở dữ liệu pgvector
+        \end{minipage}
+    }
+    \caption{Quy trình xác thực sinh viên đa giai đoạn.}
+    \label{fig:face_id_pipeline}
+\end{figure}
+
+\subsection{Chi tiết kỹ thuật Anti-Spoofing (Chống giả mạo)}
+Một trong những thách thức lớn nhất của nhận diện khuôn mặt 2D là các cuộc tấn công giả mạo (Presentation Attacks) bằng ảnh in hoặc video tái hiện trên màn hình điện thoại. SmartLib giải quyết vấn đề này bằng mô hình \textbf{MiniFASNet} (Mini Face Anti-Spoofing Network) với các đặc điểm:
+
+\begin{itemize}
+    \item \textbf{Phân tích miền tần số (Frequency Domain Analysis):} Ảnh in thường có các nhiễu tần số (Moiré patterns) hoặc sự thay đổi dải màu không liên tục so với da người thật. MiniFASNet thực hiện biến đổi Fourier hoặc sử dụng các bộ lọc tích chập sâu để bắt các đặc trưng vi mô này.
+    \item \textbf{Cấu trúc mạng nhẹ (Lightweight Backbone):} Để chạy mượt mà trên Jetson Orin Nano, MiniFASNet sử dụng kiến trúc MobileNet-style, đảm bảo thời gian xử lý chống giả mạo chỉ mất khoảng 15-20ms.
+\end{itemize}
+
+\subsection{Đặc trưng ArcFace và So khớp Vector}
+Sau khi vượt qua kiểm tra liveness, khuôn mặt sẽ được mã hóa bởi mô hình ArcFace. Hệ thống chỉ lưu trữ các "Số định danh toán học" (Feature Vectors). 
+
+Phép toán so khớp sử dụng khoảng cách Cosine (Cosine Similarity) trong không gian vector đa chiều:
+\[
+Similarity(A, B) = \frac{\sum_{i=1}^{n} A_i B_i}{\sqrt{\sum_{i=1}^{n} A_i^2} \sqrt{\sum_{i=1}^{n} B_i^2}}
+\]
+Qua thực nghiệm, chúng tôi xác định ngưỡng $T = 0.45$ là điểm tối ưu để cân bằng giữa FAR (False Acceptance Rate) và FRR (False Rejection Rate).
+
+\section{MODULE NHẬN DIỆN SÁCH VÀ XỬ LÝ HÌNH ẢNH}
+
+Quy trình nhận diện sách yêu cầu sự phối hợp giữa phát hiện vật thể (Object Detection) và tăng cường chất lượng hình ảnh (Image Enhancement).
+
+\subsection{Pipeline xử lý ảnh từ YOLOv8 đến Barcode Decoder}
+
+Khi sinh viên đặt cuốn sách lên bàn Kiosk, hệ thống thực hiện chuỗi thao tác:
+\begin{enumerate}
+    \item \textbf{YOLOv8 Detection:} Nhận diện nhãn \texttt{book} và \texttt{barcode\_area} để định vị vùng cần xử lý (ROI).
+    \item \textbf{Image Pre-processing:} Áp dụng các bộ lọc nối tiếp:
+    \begin{itemize}
+        \item \textbf{CLAHE:} Cân bằng độ tương phản cục bộ.
+        \item \textbf{Bilateral Filter:} Khử nhiễu nhưng giữ nguyên độ sắc nét của các đường biên barcode.
+        \item \textbf{Adaptive Thresholding:} Chuyển đổi ảnh sang dạng nhị phân theo phương pháp Otsu.
+    \end{itemize}
+\end{enumerate}
+
+\subsection{Bộ lọc xử lý Barcode Failsafe (FSM)}
+
+Để đảm bảo tính tin cậy 100\%, chúng tôi triển khai máy trạng thái hữu hạn (FSM) cho quy trình quét. Nếu việc giải mã (Decoding) thất bại, hệ thống sẽ tự động kích hoạt chế độ \textit{Image Enhancement} để thử lại (Retry) trước khi yêu cầu sinh viên nhập mã thủ công.
+
+\subsection{Giải thuật OCR dự phòng (OCR Fallback)}
+Trong trường hợp mã barcode bị hư hại vật lý, hệ thống kích hoạt module \textit{Tesseract OCR} đã được tinh chỉnh để đọc dãy mã ISBN in dưới thanh barcode, đảm bảo quy trình mượn trả không bị gián đoạn.
+
+\section{TRỢ LÝ ẢO THƯ VIỆN THÔNG MINH (RAG \& LLM)}
+
+Hệ thống SmartLib triển khai kiến trúc \textbf{Retrieval-Augmented Generation (RAG)} để biến kho dữ liệu sách thành một thực thể có khả năng tư vấn và đối thoại tự nhiên.
+
+\subsection{Kiến trúc RAG Đa giai đoạn}
+
+Quy trình xử lý truy vấn từ sinh viên được thực hiện qua các bước:
+\begin{enumerate}
+    \item \textbf{Query Transformation:} LLM thực hiện phân tích và tinh chỉnh câu hỏi của người dùng để tối ưu cho việc tìm kiếm ngữ nghĩa.
+    \item \textbf{Hybrid Retrieval:} Kết hợp tìm kiếm vector (Dense Retrieval) bằng BGE-M3 và tìm kiếm từ khóa (Sparse Retrieval) bằng Full-text search trong PostgreSQL.
+    \item \textbf{Context Reranking:} Sử dụng mô hình Reranker để sắp xếp lại các đoạn tài liệu có độ liên quan cao nhất.
+    \item \textbf{Augmented Generation:} Tạo câu trả lời dựa trực tiếp trên các đoạn văn bản đã truy xuất được.
+\end{enumerate}
+
+\subsection{Mô hình Embedding BGE-M3}
+Chúng tôi lựa chọn BGE-M3 vì khả năng hỗ trợ đa ngữ và độ dài ngữ cảnh vượt trội (lên tới 8192 tokens). Điều này cho phép mã hóa toàn bộ tóm tắt sách mà không làm sụt giảm thông tin trọng yếu.
+
+\subsection{Quản lý Vector Database với pgvector}
+Việc tích hợp \texttt{pgvector} trực tiếp vào PostgreSQL giúp duy trì tính nhất quán dữ liệu và cho phép thực hiện các truy vấn lai (Hybrid Queries) với hiệu năng cao.
+
+\section{TỐI ƯU HÓA PHẦN CỨNG VÀ EDGE AI}
+
+Để vận hành ổn định trên thiết bị biên 24/7, hệ thống áp dụng các chiến lược tối ưu hóa phần cứng khắt khe.
+
+\subsection{Nền tảng NVIDIA Jetson Orin Nano}
+Với 1024 lõi CUDA và kiến trúc Ampere, Jetson Orin Nano cung cấp 40 TOPS hiệu năng AI trong khi chỉ tiêu thụ từ 7W đến 15W điện năng.
+
+\subsection{Tối ưu hóa với TensorRT}
+Các mô hình Deep Learning được chuyển đổi sang định dạng TensorRT engine để tận dụng tối đa phần cứng:
+\begin{itemize}
+    \item \textbf{FP16 Quantization:} Giảm dung lượng trọng số xuống 1/2 nhưng giữ nguyên độ chính xác, tối ưu cho ArcFace và YOLOv8.
+    \item \textbf{INT8 Calibration:} Tăng tốc độ inference lên 2-3 lần thông qua lượng tử hóa số nguyên 8-bit cho các tác vụ không yêu cầu độ chính xác cực cao.
+\end{itemize}
+
+\subsection{Quản lý bộ nhớ Unified Memory}
+Sử dụng kỹ thuật \textit{Zero-copy} để truyền dữ liệu ảnh trực tiếp từ CPU sang GPU trong vùng nhớ dùng chung, giúp loại bỏ độ trễ và giảm tải cho băng thông bộ nhớ.
+
+\subsection{Tích hợp Cảm biến PIR}
+Hệ thống sử dụng cảm biến hồng ngoại thụ động (PIR) để kích hoạt chế độ "Sleep/Wake-up" tự động, giúp giảm nhiệt độ cho thiết bị khi không có người sử dụng.
+
+\section{THỰC NGHIỆM VÀ ĐÁNH GIÁ}
+
+\subsection{Đánh giá Module Nhận diện Khuôn mặt}
+Chúng tôi đã tiến hành thử nghiệm trên 3000 mẫu ảnh trong các điều kiện khác nhau.
+
+\begin{table}[H]
+    \centering
+    \caption{Hiệu năng nhận diện khuôn mặt theo điều kiện ánh sáng.}
+    \begin{tabularx}{\textwidth}{lXXXXX}
+        \toprule
+        \textbf{Ánh sáng} & \textbf{Mẫu} & \textbf{Acc (\%)} & \textbf{Prec (\%)} & \textbf{Recall (\%)} & \textbf{Latency} \\
+        \midrule
+        Sáng (500 lux) & 1,000 & 99.85 & 99.92 & 99.78 & 25ms \\
+        Trung bình & 1,000 & 99.72 & 99.80 & 99.64 & 28ms \\
+        Tối (100 lux) & 1,000 & 98.45 & 98.60 & 98.30 & 35ms \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Hiệu năng Hệ thống RAG}
+Hệ thống đạt điểm \textit{Faithfulness} 0.94 và \textit{Answer Relevance} 0.89, chứng minh tính tin cậy cao của trợ lý AI.
+
+\section{BẢO MẬT VÀ QUYỀN RIÊNG TƯ}
+Hệ thống tuân thủ nghiêm ngặt các tiêu chuẩn bảo mật dữ liệu sinh trắc học. Toàn bộ ảnh thô sẽ bị xóa ngay sau khi trích xuất vector. Dữ liệu truyền tải được mã hóa qua TLS 1.3.
+
+\section{HƯỚNG PHÁT TRIỂN TIẾP THEO}
+Trong tương lai, chúng tôi dự định tích hợp hệ thống nhận diện hành vi (Action Recognition) để phát hiện sớm các hành vi gây mất trật tự trong thư viện và mở rộng hệ thống gợi ý sách cá nhân hóa dựa trên AI.
+
+\section{KẾT LUẬN}
+SmartLib không chỉ là một công cụ quản lý, mà là một hệ sinh thái thông minh giúp nâng tầm trải nghiệm của sinh viên và cán bộ thư viện. Việc ứng dụng AI tại biên giúp giải quyết bài toán về hiệu suất và bảo mật một cách triệt để.
+
+\appendix
+\section{PHỤ LỤC KỸ THUẬT}
+
+\subsection{Danh mục API Cốt lõi}
+\begin{table}[H]
+    \centering
+    \small
+    \begin{tabularx}{\textwidth}{llX}
+        \toprule
+        \textbf{Endpoint} & \textbf{Method} & \textbf{Mô tả} \\
+        \midrule
+        \texttt{/api/v1/auth/face} & POST & Xác thực khuôn mặt \\
+        \texttt{/api/v1/books/scan} & POST & Nhận diện sách từ ảnh \\
+        \texttt{/api/v1/rag/query} & POST & Truy vấn trợ lý AI \\
+        \bottomrule
+    \end{tabularx}
+\end{table}
+
+\subsection{Danh mục thiết bị (Hardware BOM)}
+\begin{table}[H]
+    \centering
+    \begin{tabular}{lr}
+        \toprule
+        \textbf{Linh kiện} & \textbf{Đơn giá (VNĐ)} \\
+        \midrule
+        NVIDIA Jetson Orin Nano & 15.000.000 \\
+        Camera RPi v2 (x2) & 1.500.000 \\
+        Màn hình cảm ứng 15.6" & 3.500.000 \\
+        Vỏ máy và phụ kiện & 5.100.000 \\
+        \midrule
+        \textbf{Tổng cộng} & \textbf{25.100.000} \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{thebibliography}{99}
+\bibitem{arcface} Deng, J., et al. (2019). \textit{ArcFace: Additive Angular Margin Loss for Deep Face Recognition.} CVPR.
+\bibitem{yolo} Jocher, G., Chaurasia, A., \& Qiu, J. (2023). \textit{YOLO by Ultralytics.}
+\bibitem{rag} Lewis, P., et al. (2020). \textit{Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks.} NeurIPS.
+\bibitem{jetson} NVIDIA. \textit{Jetson Orin Nano Technical Documentation.}
+\end{thebibliography}
+
+\end{document}

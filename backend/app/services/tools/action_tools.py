@@ -297,7 +297,7 @@ async def reserve_book_tool(
             "success": True,
             "context": context,
             "action": "reserve",
-            "book_title": target_book.book_id,
+            "book_title": target_book.title,  # Fixed: was incorrectly using book_id
             "queue_position": queue_position,
         }
 
@@ -347,6 +347,9 @@ async def get_personalized_recommendations(
                 "has_recommendations": False,
                 "books": [],
             }
+        
+        # Get the most recent book title for context
+        recent_title = history[0][0]
 
         # Tổng hợp chủ đề từ lịch sử
         topics = []
@@ -397,7 +400,7 @@ async def get_personalized_recommendations(
             context_lines.append(
                 f"- 📘 **{book['title']}**\n"
                 f"  - 👤 Tác giả: *{book.get('author', 'Đang cập nhật')}*\n"
-                f"  - 🏷️ Thể loại: `{book.get('subject_category', 'Chưa phân loại')}`"
+                f"  - 🏷️ Thể loại: `{book.get('category', 'Chưa phân loại')}`"
             )
 
         return {

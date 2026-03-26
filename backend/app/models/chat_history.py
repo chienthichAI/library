@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from typing import Optional, Any
 from sqlalchemy import String, Text, DateTime, JSON
@@ -19,9 +19,12 @@ class ChatHistory(Base):
     student_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False) # 'human', 'ai', 'system'
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(768), nullable=True) # Updated to 768 for vietnamese-sbert
+    # 1024-dim to match AITeamVN/Vietnamese_Embedding (bge-m3 base)
+    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(1024), nullable=True)
     extra_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
 
     def __repr__(self) -> str:
         return f"<ChatHistory(id={self.id}, role={self.role}, session={self.session_id})>"

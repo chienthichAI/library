@@ -76,7 +76,7 @@ def chunk_by_section(text: str, max_chunk_size: int = CHUNK_SIZE) -> list[dict]:
 
 async def main():
     print("=" * 60)
-    print("SmartLib - Library Policy Indexer (Standardized 768d)")
+    print("SmartLib - Library Policy Indexer (Standardized 1024d)")
     print("=" * 60)
 
     # 1. Load policy file
@@ -84,14 +84,15 @@ async def main():
     policy_text = load_policy_text(POLICY_PATH)
 
     # 2. Chunk text
-    chunks = chunk_by_section(policy_text)
+    CHUNK_SIZE = 768  # BGE-M3 handles larger context better
+    chunks = chunk_by_section(policy_text, max_chunk_size=CHUNK_SIZE)
     print(f"✂️  Created {len(chunks)} chunks")
 
     # 3. Connection & Embeddings
     engine = create_async_engine(settings.database_url, echo=False)
     SessionMaker = async_sessionmaker(engine, expire_on_commit=False)
     
-    print("\n⏳ Initializing Embedding Service (keepingitreal/vietnamese-sbert)...")
+    print("\n⏳ Initializing Embedding Service (AITeamVN/Vietnamese_Embedding)...")
     emb_model = EmbeddingsService.get_embeddings()
 
     # 4. Clear existing
@@ -110,7 +111,6 @@ async def main():
             
             try:
                 # Use LangChain embed_query (sync) or aembed_query (async)
-                # HuggingFaceEmbeddings.embed_query is sync, but we wrap it
                 embedding = await asyncio.to_thread(emb_model.embed_query, chunk_data["chunk_text"])
                 
                 if embedding:
@@ -123,7 +123,7 @@ async def main():
                     )
                     db.add(chunk)
                     success_count += 1
-                    print("✅ (768d)")
+                    print("✅ (1024d)")
                 else:
                     print("❌ (No embedding)")
             except Exception as e:
@@ -131,7 +131,7 @@ async def main():
         
         await db.commit()
 
-    print(f"\n🎉 Done! Indexed {success_count}/{len(chunks)} policy chunks with 768d vectors.")
+    print(f"\n🎉 Done! Indexed {success_count}/{len(chunks)} policy chunks with 1024d vectors.")
     await engine.dispose()
 
 

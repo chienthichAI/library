@@ -85,8 +85,8 @@ class Book(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow
     )
-    # Updated to 768 for vietnamese-sbert
-    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(768), nullable=True)
+    # Updated to 1024 for AITeamVN/Vietnamese_Embedding
+    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(1024), nullable=True)
     
     # Relationships
     transactions: Mapped[List["Transaction"]] = relationship(

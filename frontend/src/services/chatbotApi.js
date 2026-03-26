@@ -18,18 +18,23 @@ const getSessionId = () => {
 
 export const chatApi = {
     // 1. Send query to Rag Pipeline for generation
-    sendMessage: async (message, sessionId = getSessionId(), studentId = null) => {
+    sendMessage: async (message, sessionId = getSessionId(), studentId = null, metadata = {}) => {
         try {
+            const token = sessionStorage.getItem('smartlib_verification_token');
             const response = await fetch(`${BASE_URL}/api/chatbot/chat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
                 body: JSON.stringify({ 
                     query: message,
                     session_id: sessionId,
-                    student_id: studentId
+                    student_id: studentId,
+                    metadata: metadata
                 })
             });
-            if (!response.ok) throw new Error("API Connection Failed");
+            if (!response.ok) throw new Error(`API Connection Failed: ${response.status}`);
             return response.json();
         } catch (error) {
             console.error("Chat API error:", error);
@@ -41,14 +46,37 @@ export const chatApi = {
     clearSession: () => {
         sessionStorage.removeItem('smartlib_chat_session');
     },
+
+    // 3. Fetch session history
+    getHistory: async (sessionId = getSessionId()) => {
+        try {
+            const token = sessionStorage.getItem('smartlib_verification_token');
+            const response = await fetch(`${BASE_URL}/api/chatbot/history?session_id=${sessionId}`, {
+                method: 'GET',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                }
+            });
+            if (!response.ok) throw new Error(`Failed to fetch history: ${response.status}`);
+            return response.json();
+        } catch (error) {
+            console.error("Fetch history error:", error);
+            throw error;
+        }
+    },
     
-    // 3. Upload doc to trigger ingestion pipeline
+    // 4. Upload doc to trigger ingestion pipeline
     uploadDocument: async (file) => {
         const formData = new FormData();
         formData.append("file", file);
+        const token = sessionStorage.getItem('smartlib_verification_token');
         try {
             const response = await fetch(`${BASE_URL}/api/chatbot/upload-docs`, {
                 method: 'POST',
+                headers: {
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
                 body: formData
             });
             return response.json();

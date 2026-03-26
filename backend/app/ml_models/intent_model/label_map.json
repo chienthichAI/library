@@ -1,0 +1,18 @@
+{
+  "label2id": {
+    "check_debt": 0,
+    "check_stock": 1,
+    "find_book": 2,
+    "general_chat": 3,
+    "policy_query": 4,
+    "renew_book": 5
+  },
+  "id2label": {
+    "0": "check_debt",
+    "1": "check_stock",
+    "2": "find_book",
+    "3": "general_chat",
+    "4": "policy_query",
+    "5": "renew_book"
+  }
+}

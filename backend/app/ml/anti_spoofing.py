@@ -208,6 +208,11 @@ class AntiSpoofing:
             
         try:
             if self.model_path and Path(self.model_path).exists() and ONNX_AVAILABLE:
+                # Check for Git LFS placeholder (usually < 1000 bytes)
+                if Path(self.model_path).stat().st_size < 1000:
+                    logger.warning(f"Anti-spoofing model file {self.model_path} looks like an LFS placeholder (too small).")
+                    return False
+
                 providers = [
                     ('TensorrtExecutionProvider', {
                         'device_id': 0,

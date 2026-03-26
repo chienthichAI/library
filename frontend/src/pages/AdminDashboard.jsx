@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import FaceCapture from '../components/FaceCapture'
 import { API_URL } from '../config'
 import './AdminDashboard.css'
+import AIChatbot from '../components/AIChatbot'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const PAGE_SIZE = 20
@@ -408,7 +409,8 @@ export default function AdminDashboard() {
                     {[
                         { id: 'stats',    icon: '📊', label: 'Tổng quan' },
                         { id: 'books',    icon: '📚', label: 'Quản lý sách' },
-                        { id: 'students', icon: '👥', label: 'Quản lý sinh viên' }
+                        { id: 'students', icon: '👥', label: 'Quản lý sinh viên' },
+                        { id: 'chatbot',  icon: '🤖', label: 'Trợ lý AI' }
                     ].map(tab => (
                         <button key={tab.id}
                             className={activeTab === tab.id ? 'active' : ''}
@@ -432,15 +434,18 @@ export default function AdminDashboard() {
 
             {/* Main */}
             <main className="admin-main">
-                <header className="admin-header">
-                    <h2>
-                        {activeTab === 'stats' ? 'Tổng quan hệ thống'
-                            : activeTab === 'books' ? 'Thư viện sách'
-                            : 'Danh sách sinh viên'}
-                    </h2>
-                </header>
+                {activeTab !== 'chatbot' && (
+                    <header className="admin-header">
+                        <h2>
+                            {activeTab === 'stats' ? 'Tổng quan hệ thống'
+                                : activeTab === 'books' ? 'Thư viện sách'
+                                : activeTab === 'students' ? 'Danh sách sinh viên'
+                                : ''}
+                        </h2>
+                    </header>
+                )}
 
-                <section className="admin-content">
+                <section className={`admin-content ${activeTab === 'chatbot' ? 'chatbot-full' : ''}`}>
 
                     {/* ── Stats tab ── */}
                     {activeTab === 'stats' && (
@@ -596,6 +601,13 @@ export default function AdminDashboard() {
                                 )}
                             </div>
                             <Pagination total={studentsTotal} offset={studentsOffset} onPage={off => fetchStudents(off)} />
+                        </div>
+                    )}
+
+                    {/* ── Chatbot tab ── */}
+                    {activeTab === 'chatbot' && (
+                        <div className="chatbot-tab-content">
+                            <AIChatbot fullPage={true} />
                         </div>
                     )}
 

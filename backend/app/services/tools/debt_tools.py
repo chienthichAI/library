@@ -93,12 +93,31 @@ async def check_student_debt(
 
         if transactions:
             context_lines.append(f"\n📚 **Sách đang mượn ({len(transactions)} quyển):**")
+            from datetime import date
+            today = date.today()
+            
             for tx in transactions:
-                status_icon = "🔴" if str(tx["status"]) == "OVERDUE" else "📗"
+                # Tính toán realtime days_overdue
+                due_date = tx["due_date"]
+                calc_days_overdue = max(0, (today - due_date).days) if due_date else 0
+                db_days = tx.get("days_overdue", 0)
+                actual_days = max(calc_days_overdue, db_days)
+                
+                # Cập nhật status string nếu lỡ quá hạn
+                status_str = str(tx["status"])
+                if actual_days > 0 and status_str != "OVERDUE":
+                    status_str = "OVERDUE"
+                
+                status_icon = "🔴" if status_str == "OVERDUE" else "📗"
                 line = f"{status_icon} {tx['book_title']} — Hạn trả: {tx['due_date']}"
-                if tx.get("days_overdue", 0) > 0:
-                    fine = float(tx.get("fine_amount", 0))
-                    line += f" (**Quá hạn {tx['days_overdue']} ngày, phạt: {fine:,.0f} VNĐ**)"
+                
+                if actual_days > 0:
+                    # Tính realtime fine
+                    # Thường thì 10,000 VND/ngày, ta fallback cứng hoặc lấy max với DB
+                    db_fine = float(tx.get("fine_amount", 0))
+                    realtime_fine = float(actual_days * 10000)
+                    fine = max(db_fine, realtime_fine)
+                    line += f" (**Quá hạn {actual_days} ngày, phạt tạm tính: {fine:,.0f} VNĐ**)"
                 context_lines.append(f"   - {line}")
         else:
             context_lines.append("📚 Hiện không có sách nào đang mượn.")

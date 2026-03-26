@@ -1,7 +1,8 @@
 """
 SmartLib - Embedding Service
-Handles text embedding using vietnamese-sbert for 768d vectors.
+Handles text embedding using AITeamVN/Vietnamese_Embedding for 1024d vectors.
 """
+import asyncio
 from typing import Optional, List
 from loguru import logger
 from app.rag.embeddings import EmbeddingsService
@@ -9,8 +10,8 @@ from app.rag.embeddings import EmbeddingsService
 
 class EmbeddingService:
     """
-    Embedding service using keepitreal/vietnamese-sbert.
-    Produces 768-dim vectors consistent with the database schema.
+    Embedding service using AITeamVN/Vietnamese_Embedding.
+    Produces 1024-dim vectors consistent with the database schema.
     """
 
     def __init__(self):
@@ -53,10 +54,26 @@ class EmbeddingService:
 
     async def embed_batch(self, texts: List[str]) -> List[Optional[List[float]]]:
         """
-        Generate embeddings for multiple texts in parallel.
+        Generate embeddings for multiple texts using true batch inference.
+        Uses embed_documents() for a single GPU/CPU forward pass instead of
+        N separate calls, which is significantly faster.
         """
-        import asyncio
-        return list(await asyncio.gather(*[self.embed(t) for t in texts]))
+        if not texts:
+            return []
+
+        try:
+            model = self._get_model()
+            # True batch inference — single forward pass for all texts
+            embeddings = await asyncio.to_thread(model.embed_documents, texts)
+            results = []
+            for emb in embeddings:
+                if hasattr(emb, "tolist"):
+                    emb = emb.tolist()
+                results.append(list(emb) if emb else None)
+            return results
+        except Exception as e:
+            logger.warning(f"Batch embedding failed, falling back to parallel single embeds: {e}")
+            return list(await asyncio.gather(*[self.embed(t) for t in texts]))
 
 
 # Singleton instance

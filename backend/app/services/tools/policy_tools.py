@@ -17,14 +17,13 @@ async def query_policy(
 ) -> Dict[str, Any]:
     """
     Retrieve relevant policy chunks for a user's question.
-    
-    Args:
-        db: Database session
-        query: User's question about library policy
-        top_k: Number of chunks to retrieve
-        
+
     Returns:
-        Dict with policy chunks and context string
+        Dict with:
+          - found (bool): True only when DB returned high-confidence chunks
+          - chunks (list): Raw chunk dicts
+          - context (str): Formatted text to inject into TOOL CONTEXT,
+                           or empty string when nothing relevant was found.
     """
     try:
         # Generate embedding for the query
@@ -35,28 +34,42 @@ async def query_policy(
             return {
                 "found": False,
                 "chunks": [],
-                "context": "Không thể tìm kiếm thông tin quy định lúc này. Vui lòng liên hệ thủ thư để được hỗ trợ.",
+                "context": "",
             }
 
-        # Search policy_chunks table
-        chunks = await rag_service.search_policy(db, embedding, top_k=top_k)
+        # Search policy_chunks table (returns reranked results)
+        chunks = await rag_service.search_policy(db, query, embedding, top_k=top_k)
 
         if not chunks:
-            # Fallback: return general policy summary
+            logger.info(f"[Policy] No chunks returned for query: '{query[:60]}'")
             return {
                 "found": False,
                 "chunks": [],
-                "context": _get_general_policy_summary(),
+                "context": "",
             }
 
-        # Filter chunks by minimum similarity
-        relevant_chunks = [c for c in chunks if c.get("similarity", 0) >= 0.35]
-        
+        # Filter chunks by minimum similarity — only include truly relevant ones.
+        # Using 0.40 to avoid noise; if reranker is active the rerank_score matters more.
+        MIN_SIM = 0.40
+        relevant_chunks = [
+            c for c in chunks
+            if c.get("rerank_score", c.get("similarity", 0)) >= MIN_SIM
+        ]
+
         if not relevant_chunks:
-            relevant_chunks = chunks[:2]  # Take top 2 even if low similarity
+            logger.info(
+                f"[Policy] {len(chunks)} chunks found but all below similarity threshold {MIN_SIM}. "
+                f"Top score: {chunks[0].get('rerank_score', chunks[0].get('similarity', 'N/A'))}"
+            )
+            return {
+                "found": False,
+                "chunks": [],
+                "context": "",
+            }
 
         context = rag_service.format_policy_for_context(relevant_chunks)
 
+        logger.info(f"[Policy] Returning {len(relevant_chunks)} relevant chunks for query: '{query[:60]}'")
         return {
             "found": True,
             "chunks": relevant_chunks,
@@ -68,20 +81,5 @@ async def query_policy(
         return {
             "found": False,
             "chunks": [],
-            "context": _get_general_policy_summary(),
+            "context": "",
         }
-
-
-def _get_general_policy_summary() -> str:
-    """Return general policy summary as hardcoded fallback when DB search fails."""
-    return """⚠️ *(Thông tin tổng quát — không tìm được dữ liệu từ hệ thống lúc này)*
-
-**Quy định cơ bản của Thư viện SmartLib:**
-
-- 📚 Mỗi sinh viên được mượn tối đa **5 quyển** cùng lúc
-- ⏰ Thời hạn mượn tiêu chuẩn: **14 ngày**
-- 🔄 Gia hạn tối đa **2 lần**, mỗi lần thêm **7 ngày**
-- 💰 Phí phạt quá hạn: **10.000 VNĐ/ngày/quyển**
-- 🕐 Giờ mở cửa: Thứ 2-6: 7:00-21:00 | Thứ 7: 8:00-17:00 | CN: Đóng cửa
-
-💡 Để xem quy định chính xác và đầy đủ nhất, vui lòng liên hệ thủ thư hoặc hỏi lại mình khi hệ thống ổn định."""

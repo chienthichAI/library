@@ -162,6 +162,9 @@ class BookDetector:
         try:
             if YOLO_AVAILABLE:
                 if self.model_path and Path(self.model_path).exists():
+                    if Path(self.model_path).stat().st_size < 1000:
+                        logger.warning(f"Book detector model file {self.model_path} looks like an LFS placeholder (too small).")
+                        return False
                     self._model = YOLO(self.model_path)
                     logger.info(f"Loaded custom YOLOv8 model from: {self.model_path}")
                 else:

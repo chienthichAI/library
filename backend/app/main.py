@@ -120,7 +120,7 @@ async def lifespan(app: FastAPI):
             await ai_chat_assistant.close()
             await ai_intent_classifier.close()
             await embedding_service.close()
-        except:
+        except Exception:
             pass
 
         await close_db()
@@ -197,20 +197,31 @@ async def health_check():
     """Health check endpoint with actual service verification."""
     from sqlalchemy import text
     from app.database import async_session_maker
+    import httpx
     
     db_status = "disconnected"
+    ollama_status = "unknown"
     try:
         async with async_session_maker() as session:
             await session.execute(text("SELECT 1"))
             db_status = "connected"
     except Exception as e:
         db_status = f"error: {str(e)[:50]}"
+
+    # Check Ollama connectivity
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            r = await client.get(f"{settings.ollama_base_url}/api/tags")
+            ollama_status = "connected" if r.status_code == 200 else f"http_{r.status_code}"
+    except Exception as e:
+        ollama_status = f"error: {str(e)[:50]}"
     
-    overall_status = "healthy" if db_status == "connected" else "degraded"
+    overall_status = "healthy" if (db_status == "connected" and ollama_status == "connected") else "degraded"
     
     return {
         "status": overall_status,
         "database": db_status,
+        "ollama": ollama_status,
         "environment": settings.app_env,
         "services": {
             "face_detector": "ready" if (AIModels.face_detector and AIModels.face_detector._initialized) else "not_ready",

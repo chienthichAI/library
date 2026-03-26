@@ -1,0 +1,32 @@
+{
+    "total_rows": 988,
+    "columns": [
+        "text",
+        "intent"
+    ],
+    "intent_distribution": {
+        "check_stock": 168,
+        "general_chat": 168,
+        "find_book": 168,
+        "renew_book": 168,
+        "policy_query": 163,
+        "check_debt": 153
+    },
+    "missing_values": {
+        "text": 0,
+        "intent": 0
+    },
+    "duplicates": 0,
+    "inconsistent_labels": [],
+    "text_length_stats": {
+        "count": 988.0,
+        "mean": 6.470647773279352,
+        "std": 1.7876500752992537,
+        "min": 1.0,
+        "25%": 5.0,
+        "50%": 6.0,
+        "75%": 7.0,
+        "max": 16.0
+    },
+    "empty_text_entries": 0
+}
