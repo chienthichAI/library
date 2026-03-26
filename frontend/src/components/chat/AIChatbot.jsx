@@ -18,26 +18,31 @@ const AIChatbot = () => {
         setIsLoading(true);
         
         try {
-            // Simulated delay for RAG pipeline (Retrieval -> Generation)
-            // const response = await chatApi.sendMessage(input);
-            // setMessages(prev => [...prev, { role: 'ai', content: response.answer }]);
-            
-            setTimeout(() => {
-                setMessages(prev => [...prev, { role: 'ai', content: "\u26A1 Hệ thống RAG Backend đang hoàn thiện Model!" }]);
-                setIsLoading(false);
-            }, 1000);
-            
+            // Real API call to the RAG pipeline
+            const response = await chatApi.sendMessage(input);
+            setMessages(prev => [...prev, { role: 'ai', content: response.answer }]);
+            setIsLoading(false);
         } catch (error) {
-            setMessages(prev => [...prev, { role: 'error', content: 'Lỗi kết nối Server' }]);
+            setMessages(prev => [...prev, { role: 'error', content: 'Lỗi kết nối Server. Vui lòng thử lại sau.' }]);
             setIsLoading(false);
         }
+    };
+
+    const handleClear = () => {
+        chatApi.clearSession();
+        setMessages([{ role: 'ai', content: 'Phiên chat đã được làm mới. Mình có thể giúp gì cho bạn?' }]);
     };
 
     return (
         <div className="rag-chatbot-container glassmorphism-ui">
             <div className="rag-chat-header">
-                <h2>Cố Vấn AI Tri Thức</h2>
-                <span className="status-indicator online"></span>
+                <div className="header-info">
+                    <h2>Cố Vấn AI Tri Thức</h2>
+                    <span className="status-indicator online"></span>
+                </div>
+                <button className="clear-chat-btn" onClick={handleClear} title="Xóa hội thoại">
+                    🔄 Mới
+                </button>
             </div>
             
             <div className="rag-chat-messages">

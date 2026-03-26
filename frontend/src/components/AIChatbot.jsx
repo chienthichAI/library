@@ -1,11 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
+import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { chatApi } from '../services/chatbotApi';
 import './AIChatbot.css';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 const AIChatbot = () => {
     const navigate = useNavigate();
     const [isOpen, setIsOpen] = useState(false);
+
     const [messages, setMessages] = useState([
         {
             role: 'ai',
@@ -38,8 +42,14 @@ const AIChatbot = () => {
         setIsLoading(true);
 
         try {
-            const response = await chatApi.sendMessage(currentInput);
-            setMessages(prev => [...prev, { role: 'ai', content: response.answer }]);
+            const studentId = sessionStorage.getItem('smartlib_student_id');
+            const response = await chatApi.sendMessage(currentInput, undefined, studentId);
+            const { answer, suggestions } = response;
+            setMessages(prev => [...prev, { 
+                role: 'ai', 
+                content: answer,
+                suggestions: suggestions
+            }]);
         } catch (error) {
             setMessages(prev => [...prev, {
                 role: 'error',
@@ -147,6 +157,23 @@ const AIChatbot = () => {
                         </div>
                         <div className="header-actions">
                             <button
+                                className="header-btn clear-btn"
+                                onClick={() => {
+                                    chatApi.clearSession();
+                                    setMessages([{
+                                        role: 'ai',
+                                        content: 'Phiên chat đã được làm mới. Tôi có thể giúp gì cho bạn?'
+                                    }]);
+                                }}
+                                title="Xóa lịch sử chat"
+                                id="chatbot-clear-btn"
+                            >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                                    <path d="M3 3v5h5" />
+                                </svg>
+                            </button>
+                            <button
                                 className="header-btn upload-trigger"
                                 onClick={() => setShowUpload(!showUpload)}
                                 title="Upload tài liệu"
@@ -218,9 +245,11 @@ const AIChatbot = () => {
                         {messages.map((msg, idx) => (
                             <div
                                 key={idx}
-                                className={`chat-bubble ${msg.role}`}
+                                className={`chat-bubble ${msg.role === 'ai' ? 'ai' : 
+                                           msg.role === 'bot' ? 'ai' : 
+                                           msg.role === 'user' ? 'user' : 'error'}`}
                             >
-                                {msg.role === 'ai' && (
+                                {(msg.role === 'ai' || msg.role === 'bot') && (
                                     <div className="bubble-avatar">
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                                             <circle cx="12" cy="12" r="10" />
@@ -231,7 +260,31 @@ const AIChatbot = () => {
                                     </div>
                                 )}
                                 <div className="bubble-content">
-                                    {msg.content}
+                                    {(msg.role === 'ai' || msg.role === 'bot') ? (
+                                        <div className="prose">
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                {msg.content}
+                                            </ReactMarkdown>
+                                        </div>
+                                    ) : (
+                                        <div className="user-text">
+                                            {msg.content}
+                                        </div>
+                                    )}
+
+                                    {msg.suggestions && msg.suggestions.length > 0 && (
+                                        <div className="suggestions-container">
+                                            {msg.suggestions.map((book, bIdx) => (
+                                                <div key={bIdx} className="book-card" onClick={() => navigate(`/books/${book.book_id}`)}>
+                                                    <h4>{book.title}</h4>
+                                                    <p>{book.author}</p>
+                                                    <span className={`status-badge ${book.status === 'AVAILABLE' ? 'status-available' : 'status-borrowed'}`}>
+                                                        {book.status === 'AVAILABLE' ? 'Sẵn sàng' : 'Đã mượn'}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         ))}

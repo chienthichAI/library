@@ -14,7 +14,7 @@ class PolicyChunk(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(1024), nullable=True) # Dimension check confirmed 1024
+    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(768), nullable=True) # Updated to 768 for vietnamese-sbert
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     section_title: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     source: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -22,3 +22,4 @@ class PolicyChunk(Base):
 
     def __repr__(self) -> str:
         return f"<PolicyChunk(id={self.id}, section={self.section_title})>"
+

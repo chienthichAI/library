@@ -152,7 +152,7 @@ class FaceRecognizer:
                     'CPUExecutionProvider'
                 ] if self.use_gpu else ['CPUExecutionProvider']
                 self._session = ort.InferenceSession(self.model_path, providers=providers)
-                logger.info(f"Loaded standalone ArcFace model from: {self.model_path} with providers {providers[0] if self.use_gpu else 'CPU'}")
+                logger.info(f"Loaded standalone ArcFace model from: {self.model_path}")
                 
             else:
                 logger.error("No face recognition model available. Real model is required.")
@@ -198,24 +198,17 @@ class FaceRecognizer:
             if aligned_face.shape[:2] != (112, 112):
                 aligned_face = cv2.resize(aligned_face, (112, 112))
             
-            import time
-            t0 = time.time()
-            if self._session is not None:
-                logger.info(f"[DEBUG] Extracting embedding using standalone ONNX session")
-                # Do not apply CLAHE, as InsightFace models expect raw images normalized properly
-                embedding = self._run_onnx_inference(aligned_face)
-            elif self._rec_model is not None:
-                # If we hitched to InsightFace's existing FaceAnalysis instance,
-                # prefer the real recognizer instead of the mock embedding.
-                logger.info(f"[DEBUG] Extracting embedding using InsightFace recognizer")
+            # Preprocessing priorities:
+            # 1. InsightFace models (built-in preprocessing)
+            # 2. Standalone ONNX session (manual CLAHE + normalization)
+            if self._rec_model is not None:
                 embedding = self._run_insightface_inference(aligned_face)
-            else:
-                # Last-resort fallback for testing/dev environments without a real model.
+            elif self._session is not None:
                 aligned_face = self._apply_clahe(aligned_face)
+                embedding = self._run_onnx_inference(aligned_face)
+            else:
+                # Fallback to mock embedding for dev/testing only
                 embedding = self._mock_embedding(aligned_face)
-                
-            t1 = time.time()
-            logger.info(f"[DEBUG] Internal feature extraction took {(t1-t0)*1000:.2f}ms")
             # L2 normalize properly
             norm = np.linalg.norm(embedding)
             if abs(norm - 1.0) > 0.01:
@@ -236,9 +229,8 @@ class FaceRecognizer:
             )
     
     def _run_onnx_inference(self, face: np.ndarray) -> np.ndarray:
-        """Run inference using ONNX Runtime with InsightFace-equivalent preprocessing."""
-        # InsightFace uses scale=1.0/127.5, mean=(127.5, 127.5, 127.5), swapRB=True
-        # and spatial size usually 112x112
+        # InsightFace equivalent preprocessing: 
+        # Scale=1.0/127.5, Mean=(127.5, 127.5, 127.5), SwapRB=True
         blob = cv2.dnn.blobFromImages(
             [face], 1.0 / 127.5, (112, 112),
             (127.5, 127.5, 127.5), swapRB=True
@@ -254,8 +246,6 @@ class FaceRecognizer:
             embedding = self._rec_model.get_feat(face)
             return embedding.flatten()
             
-        return self._mock_embedding(face)
-    
     def _mock_embedding(self, face: np.ndarray) -> np.ndarray:
         """
         Generate mock embedding for testing.

@@ -26,6 +26,8 @@ class BookCreate(BaseModel):
     publication_year: Optional[int] = None
     language: str = Field(default="vi", max_length=20)
     subject_category: Optional[str] = Field(None, max_length=100)
+    smart_category: Optional[str] = Field(None, max_length=255, description="AI-enriched category (optional)")
+    ai_category: Optional[str] = Field(None, max_length=255, description="AI category label (optional)")
     
     class Config:
         json_schema_extra = {
@@ -38,7 +40,9 @@ class BookCreate(BaseModel):
                 "publisher": "O'Reilly",
                 "publication_year": 2024,
                 "language": "en",
-                "subject_category": "Computer Science"
+                "subject_category": "Computer Science",
+                "smart_category": "AI / Machine Learning",
+                "ai_category": "AI_ML"
             }
         }
 
@@ -48,6 +52,9 @@ class BookUpdate(BaseModel):
     title: Optional[str] = Field(None, max_length=255)
     author: Optional[str] = Field(None, max_length=255)
     status: Optional[BookStatus] = None
+    subject_category: Optional[str] = Field(None, max_length=100)
+    smart_category: Optional[str] = Field(None, max_length=255)
+    ai_category: Optional[str] = Field(None, max_length=255)
 
 
 class BookResponse(BaseModel):
@@ -61,12 +68,15 @@ class BookResponse(BaseModel):
     publication_year: Optional[int]
     language: str
     subject_category: Optional[str]
+    smart_category: Optional[str] = None
+    ai_category: Optional[str] = None
     description: Optional[str]
     status: BookStatus
     created_at: Optional[datetime]
     
     class Config:
         from_attributes = True
+
 
 
 class BookIdentificationResponse(BaseModel):

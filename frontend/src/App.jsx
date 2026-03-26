@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import WelcomeScreen from './pages/WelcomeScreen'
 import RegistrationFlow from './pages/RegistrationFlow'

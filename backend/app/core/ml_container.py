@@ -26,9 +26,9 @@ async def init_ai_models():
     logger.info(f"Initializing AI models (GPU: {settings.use_gpu})...")
     
     # 1. Face Detector (InsightFace/ArcFace/RetinaFace)
+    # Using larger buffalo_l for better accuracy in kiosk environments
     AIModels.face_detector = FaceDetector(
-        model_name="buffalo_s",
-        det_size=(320, 320),
+        model_name="buffalo_l",
         use_gpu=settings.use_gpu
     )
     if not AIModels.face_detector.initialize():

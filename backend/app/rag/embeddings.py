@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 class EmbeddingsService:
     """
     Converts text chunks into numerical vectors that capture semantic meaning.
-    Using keepitreal/vietnamese-sbert which provides high performance at 1024d.
+    Using keepitreal/vietnamese-sbert which provides high performance at 768d.
     Note: 'embeddings.position_ids | UNEXPECTED' warning is a known BERT/BGE load report 
     artifact that can be safely ignored.
     """

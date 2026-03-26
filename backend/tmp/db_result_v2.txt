@@ -1,0 +1,6 @@
+Found 3 books matching 'Cambridge':
+- Title: Cambridge IELTS Academic 16 with Answers | Category: Luyện thi IELTS
+- Title: Cambridge IELTS Academic 18 with Answers | Category: Luyện thi IELTS
+- Title: Cambridge IELTS Academic 17 with Answers | Category: Luyện thi IELTS
+
+Books matching subject_category ILIKE '%Học Tiếng Anh Cambridge%':

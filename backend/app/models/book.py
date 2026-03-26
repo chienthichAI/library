@@ -9,6 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.database import Base
+from pgvector.sqlalchemy import Vector
 
 if TYPE_CHECKING:
     from app.models.transaction import Transaction
@@ -58,6 +59,9 @@ class Book(Base):
     
     # Category/Subject
     subject_category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # AI-enriched categories (present in Supabase schema)
+    smart_category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    ai_category: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     # Cover image path (for display and AI training)
@@ -81,6 +85,8 @@ class Book(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow
     )
+    # Updated to 768 for vietnamese-sbert
+    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(768), nullable=True)
     
     # Relationships
     transactions: Mapped[List["Transaction"]] = relationship(

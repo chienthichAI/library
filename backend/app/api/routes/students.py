@@ -166,6 +166,10 @@ async def get_student_borrowing_info(
         raise HTTPException(status_code=500, detail="Lỗi hệ thống khi lấy thông tin mượn sách")
 
 
+# ---------------------------------------------------------------------------
+# POST / — create student
+# ---------------------------------------------------------------------------
+
 @router.post("/", response_model=StudentResponse, status_code=201)
 async def create_student(
     student: StudentCreate,
@@ -238,12 +242,128 @@ async def create_student(
     except Exception as e:
         logger.error(f"Create student error: {e}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Lỗi hệ thống khi tạo sinh viên")
 
 
-@router.get("/", response_model=List[StudentResponse])
-async def list_students(
-    db: AsyncSession = Depends(get_db)
+# ---------------------------------------------------------------------------
+# PUT /{student_id} — update student info / status
+# ---------------------------------------------------------------------------
+@router.put("/{student_id}", response_model=StudentResponse)
+async def update_student(
+    student_id: str = Path(..., description="Student ID"),
+    update: StudentUpdate = ...,
+    db: AsyncSession = Depends(get_db),
+    _claims=Depends(require_admin_session)
+):
+    """
+    Update student info (name, email, phone, status).
+
+    Use this to suspend/reactivate a student or fix personal info.
+    """
+    try:
+        stmt = select(Student).where(Student.student_id == student_id)
+        result = await db.execute(stmt)
+        student = result.scalar_one_or_none()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Không tìm thấy sinh viên")
+
+        if update.full_name is not None:
+            student.full_name = update.full_name
+
+        if update.email is not None and update.email != student.email:
+            stmt_email = select(Student).where(
+                Student.email == update.email,
+                Student.student_id != student_id
+            )
+            if (await db.execute(stmt_email)).scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Email này đã được sử dụng bởi sinh viên khác")
+            student.email = update.email
+
+        if update.phone is not None and update.phone != student.phone:
+            stmt_phone = select(Student).where(
+                Student.phone == update.phone,
+                Student.student_id != student_id
+            )
+            if (await db.execute(stmt_phone)).scalar_one_or_none():
+                raise HTTPException(status_code=400, detail="Số điện thoại này đã được sử dụng")
+            student.phone = update.phone
+
+        if update.status is not None:
+            student.status = StudentStatus(update.status.value)
+
+        student.updated_at = datetime.utcnow()
+        await db.commit()
+        await db.refresh(student)
+
+        logger.info(f"Student updated: {student_id}")
+        return StudentResponse.model_validate(student)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update student error: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Lỗi hệ thống khi cập nhật sinh viên")
+
+
+# ---------------------------------------------------------------------------
+# DELETE /{student_id} — remove student (admin only, no active loans)
+# ---------------------------------------------------------------------------
+@router.delete("/{student_id}", status_code=204)
+async def delete_student(
+    student_id: str = Path(..., description="Student ID"),
+    db: AsyncSession = Depends(get_db),
+    _claims=Depends(require_admin_session)
+):
+    """
+    Delete a student account.
+
+    **Blocked if:** student has any active or overdue loans.
+    """
+    try:
+        from app.models.transaction import Transaction, TransactionStatus
+
+        stmt = select(Student).where(Student.student_id == student_id)
+        result = await db.execute(stmt)
+        student = result.scalar_one_or_none()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Không tìm thấy sinh viên")
+
+        # Block if active loans exist
+        active_loans_stmt = select(func.count()).select_from(Transaction).where(
+            Transaction.student_id == student_id,
+            Transaction.status.in_(["ACTIVE", "OVERDUE"])
+        )
+        active_count = (await db.execute(active_loans_stmt)).scalar() or 0
+        if active_count > 0:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Không thể xóa: sinh viên đang mượn {active_count} cuốn sách"
+            )
+
+        await db.delete(student)
+        await db.commit()
+        logger.info(f"Student deleted: {student_id}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete student error: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Lỗi hệ thống khi xóa sinh viên")
+
+
+# ---------------------------------------------------------------------------
+# POST /{student_id}/clear-fine — manual fine clearance (admin action)
+# ---------------------------------------------------------------------------
+@router.post("/{student_id}/clear-fine", response_model=StudentResponse)
+async def clear_student_fine(
+    student_id: str = Path(..., description="Student ID"),
+    db: AsyncSession = Depends(get_db),
+    _claims=Depends(require_admin_session)
+
 ):
     """
     Clear outstanding fine balance for a student (admin action).

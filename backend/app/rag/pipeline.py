@@ -227,16 +227,16 @@ class RAGPipeline:
         faq_cache_hit = await self._check_faq_cache(query, query_vector)
         if faq_cache_hit:
             logger.info(f"FAQ semantic cache hit for: {query[:50]}...")
-            await self._save_interaction(session_id, student_id, "USER", query, query_vector)
-            await self._save_interaction(session_id, student_id, "ASSISTANT", faq_cache_hit, None, {"type": "faq_cache"})
+            await self._save_interaction(session_id, student_id, "human", query, query_vector)
+            await self._save_interaction(session_id, student_id, "ai", faq_cache_hit, None, {"type": "faq_cache"})
             return faq_cache_hit
 
         # b) Chat History Cache
         cached_answer = await self._check_semantic_cache(query_vector)
         if cached_answer:
             logger.info(f"Interaction cache hit for: {query[:50]}...")
-            await self._save_interaction(session_id, student_id, "USER", query, query_vector)
-            await self._save_interaction(session_id, student_id, "ASSISTANT", cached_answer, None, {"type": "history_cache"})
+            await self._save_interaction(session_id, student_id, "human", query, query_vector)
+            await self._save_interaction(session_id, student_id, "ai", cached_answer, None, {"type": "history_cache"})
             return cached_answer
 
         # 2. Main Logic
@@ -246,8 +246,8 @@ class RAGPipeline:
             answer = await self._ask_general(query, query_vector)
 
         # 3. Save to History
-        await self._save_interaction(session_id, student_id, "USER", query, query_vector)
-        await self._save_interaction(session_id, student_id, "ASSISTANT", answer)
+        await self._save_interaction(session_id, student_id, "human", query, query_vector)
+        await self._save_interaction(session_id, student_id, "ai", answer)
 
         return answer
 
@@ -271,7 +271,8 @@ class RAGPipeline:
         async with async_session_maker() as session:
             # 1. Find the closest user question
             stmt = select(ChatHistory.session_id, ChatHistory.created_at, ChatHistory.embedding.l2_distance(query_vector).label("dist")) \
-                   .where(ChatHistory.role == "USER") \
+                   .where(ChatHistory.role == "human") \
+                   .where(ChatHistory.embedding.isnot(None)) \
                    .order_by("dist").limit(1)
             
             result = await session.execute(stmt)
@@ -281,7 +282,7 @@ class RAGPipeline:
                 # 2. Find the assistant response that followed it in the same session
                 ans_stmt = select(ChatHistory.content) \
                            .where(ChatHistory.session_id == best_match.session_id) \
-                           .where(ChatHistory.role == "ASSISTANT") \
+                           .where(ChatHistory.role == "ai") \
                            .where(ChatHistory.created_at >= best_match.created_at) \
                            .order_by(ChatHistory.created_at.asc()).limit(1)
                 ans_res = await session.execute(ans_stmt)
@@ -307,10 +308,11 @@ class RAGPipeline:
                 else:
                     safe_embedding = list(embedding)
                 
-                # Verify dimension (must be 1024 for BGE-large)
-                if len(safe_embedding) != 1024:
-                    logger.warning(f"Embedding dimension mismatch: expected 1024, got {len(safe_embedding)}. Skipping vector save.")
+                # Verify dimension (must be 768 for vietnamese-sbert)
+                if len(safe_embedding) != 768:
+                    logger.warning(f"Embedding dimension mismatch: expected 768, got {len(safe_embedding)}. Skipping vector save.")
                     safe_embedding = None
+
 
             async with async_session_maker() as session:
                 new_msg = ChatHistory(

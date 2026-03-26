@@ -6,28 +6,60 @@ from app.database import async_session_maker
 from app.models.book import Book, BookStatus
 from app.models.student import Student
 from app.models.transaction import Transaction, TransactionStatus
+from underthesea import word_tokenize, pos_tag
+import re
 
 @tool
 async def search_books(query: str) -> str:
-    """Tra cứu sách theo tên, tác giả hoặc thể loại trong thư viện. Sử dụng công cụ này khi sinh viên muốn tìm một cuốn sách."""
-    logger.info(f"Tool executed: search_books with query '{query}'")
+    """Tra cứu sách theo tên, tác giả hoặc thể loại trong thư viện. Sử dụng công cụ này khi sinh viên muốn tìm một cuốn sách. Hãy chỉ truyền vào các KEYWORD quan trọng (tên sách, tác giả), không truyền cả câu hỏi của sinh viên."""
+    logger.info(f"Tool executed: search_books with raw query '{query}'")
     try:
+        # Pre-process query to extract meaningful keywords, excluding library noise
+        tagged_tokens = pos_tag(query.lower())
+        allowed_tags = {'N', 'NP', 'V', 'A', 'M', 'Np', 'Nc'}
+        stop_keywords = {"tìm", "cần", "muốn", "sách", "cuốn", "bản", "giúp", "mình", "tôi", "cho"}
+        
+        keywords = []
+        for token, tag in tagged_tokens:
+            if tag in allowed_tags:
+                clean = re.sub(r'[^\w\s]', '', token).strip()
+                if clean and len(clean) > 1 and clean not in stop_keywords:
+                    keywords.append(clean)
+        
+        search_term = " ".join(keywords) if keywords else query
+        logger.info(f"Extracted keywords for DB query: '{search_term}'")
+
         async with async_session_maker() as session:
-            stmt = select(Book).where(
-                or_(
+            # We use a more flexible ILIKE search with extracted keywords
+            # For even better results, we could call RAGService.search_books_hybrid here
+            # but that requires embeddings which tool call might not have yet.
+            # So we stick to improved keyword-based ILIKE.
+            
+            # If multiple keywords, try to match any
+            conditions = []
+            if keywords:
+                for kw in keywords[:3]: # Limit to top 3 keywords to avoid complex queries
+                    conditions.append(Book.title.ilike(f"%{kw}%"))
+                    conditions.append(Book.author.ilike(f"%{kw}%"))
+                    conditions.append(Book.subject_category.ilike(f"%{kw}%"))
+            
+            # Fallback if no keywords extracted or no conditions built
+            if not conditions:
+                conditions = [
                     Book.title.ilike(f"%{query}%"),
                     Book.author.ilike(f"%{query}%"),
                     Book.subject_category.ilike(f"%{query}%")
-                )
-            ).limit(5)
+                ]
+
+            stmt = select(Book).where(or_(*conditions)).limit(5)
             
             result = await session.execute(stmt)
             books = result.scalars().all()
             
             if not books:
-                return f"Không tìm thấy sách nào khớp với từ khóa '{query}'."
+                return f"Không tìm thấy sách nào khớp với từ khóa '{search_term}'."
             
-            response = [f"Tìm thấy {len(books)} kết quả:"]
+            response = [f"Tìm thấy {len(books)} kết quả cho '{search_term}':"]
             for b in books:
                 status_vn = "Sẵn sàng mượn" if b.status == BookStatus.AVAILABLE else "Đang được mượn/Không khả dụng"
                 author = b.author if b.author else "Khuyết danh"

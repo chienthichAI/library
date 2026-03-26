@@ -90,9 +90,11 @@ class AuthenticationService:
         
         self.face_recognizer = face_recognizer or AIModels.face_recognizer or FaceRecognizer(
             face_analysis_instance=getattr(self.face_detector, '_model', None),
-            model_path=settings.face_model_path if not getattr(self.face_detector, '_model', None) else None
+            model_path=settings.face_model_path if not getattr(self.face_detector, '_model', None) else None,
+            use_gpu=settings.use_gpu
         )
         self.anti_spoofing = anti_spoofing or AIModels.anti_spoofing or AntiSpoofing(
+
             model_path=settings.antispoofing_model_path,
             threshold=self.liveness_threshold
         )
@@ -207,7 +209,10 @@ class AuthenticationService:
         try:
             # Step 1: Detect face FIRST (needed for quality check)
             t_det0 = time.time()
-            faces = self.face_detector.detect(image, max_faces=5)
+            if pre_detected_face is not None:
+                faces = [pre_detected_face]
+            else:
+                faces = self.face_detector.detect(image, max_faces=5)
             t_det1 = time.time()
             logger.info(f"[Perf] FaceDetector.detect took {(t_det1-t_det0)*1000:.2f}ms")
             
@@ -685,7 +690,7 @@ class AuthenticationService:
                 )
                 
             # Detect face
-            faces = self.face_detector.detect(face_image, max_faces=1, extract_embedding=False)
+            faces = self.face_detector.detect(face_image, max_faces=1)
             
             if not faces:
                 error_msg = "Không phát hiện khuôn mặt."

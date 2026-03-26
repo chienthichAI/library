@@ -20,7 +20,7 @@ class GeneratorService:
     
     def __init__(self, retriever, *, model: Optional[str] = None, base_url: Optional[str] = None):
         self.retriever = retriever
-        self.model = model or os.getenv("OLLAMA_MODEL", "qwen3:4b")
+        self.model = model or os.getenv("OLLAMA_MODEL", "Qwen2-3B-RAG")
         self.base_url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         
     async def generate_response(self, query: str):

@@ -83,7 +83,7 @@ class FaceDetector:
     def __init__(
         self,
         model_name: str = "buffalo_l",
-        det_size: Tuple[int, int] = (320, 320),
+        det_size: Tuple[int, int] = (640, 640),
         det_thresh: float = 0.5,
         use_gpu: bool = True
     ):
@@ -146,7 +146,7 @@ class FaceDetector:
             try:
                 from norfair import Tracker
                 self.tracker = Tracker(
-                    distance_function="euclidean",
+                    distance_function="mean_euclidean",
                     distance_threshold=100,
                     initialization_delay=2,
                     hit_counter_max=10

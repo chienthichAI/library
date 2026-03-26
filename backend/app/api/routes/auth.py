@@ -59,8 +59,6 @@ async def verify_face(
             raise HTTPException(status_code=400, detail="Invalid image format")
             
         # Decode all frames concurrently to improve processing speed (20-40ms target)
-        import asyncio
-
         async def _decode_frame(f):
             await f.seek(0)
             c = await f.read()
@@ -69,6 +67,7 @@ async def verify_face(
 
         decoded_frames = await asyncio.gather(*[_decode_frame(f) for f in images])
         frames = [f for f in decoded_frames if f is not None]
+
         
         # Authenticate with quality check (P3-04: 15s timeout for ML inference)
         result = await asyncio.wait_for(

@@ -17,9 +17,9 @@ class ChatHistory(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     student_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
-    role: Mapped[str] = mapped_column(String(50), nullable=False) # 'user', 'assistant', 'system'
+    role: Mapped[str] = mapped_column(String(50), nullable=False) # 'human', 'ai', 'system'
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(1024), nullable=True) # For semantic caching
+    embedding: Mapped[Optional[Vector]] = mapped_column(Vector(768), nullable=True) # Updated to 768 for vietnamese-sbert
     extra_metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 

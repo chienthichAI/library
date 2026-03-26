@@ -30,6 +30,7 @@ if %errorlevel%==0 (
     pip install -r requirements.txt
 )
 
+
 REM Create logs directory
 if not exist "logs" mkdir logs
 

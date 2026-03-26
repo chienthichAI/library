@@ -1,27 +1,55 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from typing import Optional, List
 from pydantic import BaseModel
 from app.rag.pipeline import RAGPipeline
+from app.services.chat_service import chat_service
+from app.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 import os
 import shutil
+import uuid
 
 router = APIRouter(tags=["Chatbot RAG"])
 
-# Khởi tạo Global Pipeline cho Demo RAG
+# Keep the legacy pipeline instance for /upload-docs (ephemeral RAG demo)
 rag_pipeline = RAGPipeline()
 
 class ChatRequest(BaseModel):
     query: str
+    session_id: Optional[str] = None
+    student_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     answer: str
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat_with_bot(request: ChatRequest):
+async def chat_with_bot(
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Consolidated Chat Endpoint.
+    Now uses the smarter ChatService (Intent + AI Entities + Hybrid Search).
+    """
     try:
-        answer = await rag_pipeline.ask_question(request.query)
-        return {"answer": answer}
+        # Use provided session_id or fallback to a default
+        session_id = request.session_id or "legacy-chatbot-demo"
+        student_id = request.student_id
+        
+        result = await chat_service.process_message(
+            db=db,
+            message=request.query,
+            session_id=session_id,
+            student_id=student_id
+        )
+        
+        # Map 'reply' from ChatService to 'answer' for legacy compatibility
+        return {"answer": result.get("reply", "Xin lỗi, mình không tìm thấy câu trả lời.")}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        from loguru import logger
+        logger.error(f"Consolidated Chat error: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="Lỗi hệ thống khi xử lý chatbot.")
 
 @router.post("/upload-docs")
 async def upload_document(file: UploadFile = File(...)):
