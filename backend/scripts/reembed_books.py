@@ -36,8 +36,8 @@ async def reembed_all_books():
                 embedding = await asyncio.to_thread(embeddings_model.embed_query, content)
                 
                 # Verify dimension
-                if len(embedding) != 768:
-                    logger.error(f"Dimension mismatch for {b.book_id}: expected 768, got {len(embedding)}")
+                if len(embedding) != 1024:
+                    logger.error(f"Dimension mismatch for {b.book_id}: expected 1024, got {len(embedding)}")
                     continue
                 
                 # 4. Update the book

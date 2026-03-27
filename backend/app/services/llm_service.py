@@ -26,7 +26,7 @@ class LlmService:
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        model: str = "qwen3.5:2b",
+        model: str = "Qwen2-3B-RAG",
     ):
         self.base_url = base_url
         self.model = model

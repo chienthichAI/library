@@ -6,9 +6,9 @@ import './AIChatbot.css';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-const AIChatbot = () => {
+const AIChatbot = ({ isEmbedded = false }) => {
     const navigate = useNavigate();
-    const [isOpen, setIsOpen] = useState(false);
+    const [isOpen, setIsOpen] = useState(isEmbedded); // Default open if embedded
 
     const [messages, setMessages] = useState([
         {
@@ -109,14 +109,15 @@ const AIChatbot = () => {
     };
 
     return (
-        <div className="ai-chatbot-wrapper">
-            {/* Floating Toggle Button */}
-            <button
-                id="chatbot-toggle-btn"
-                className={`chatbot-toggle ${isOpen ? 'active' : ''}`}
-                onClick={() => setIsOpen(!isOpen)}
-                aria-label="Toggle AI Chatbot"
-            >
+        <div className={`ai-chatbot-wrapper ${isEmbedded ? 'embedded' : ''}`}>
+            {/* Floating Toggle Button - Only if not embedded */}
+            {!isEmbedded && (
+                <button
+                    id="chatbot-toggle-btn"
+                    className={`chatbot-toggle ${isOpen ? 'active' : ''}`}
+                    onClick={() => setIsOpen(!isOpen)}
+                    aria-label="Toggle AI Chatbot"
+                >
                 <span className="toggle-icon">
                     {isOpen ? (
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -133,7 +134,8 @@ const AIChatbot = () => {
                     )}
                 </span>
                 {!isOpen && <span className="toggle-pulse" />}
-            </button>
+                </button>
+            )}
 
             {/* Chat Window */}
             {isOpen && (
@@ -183,17 +185,19 @@ const AIChatbot = () => {
                                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
                                 </svg>
                             </button>
-                            <button
-                                className="header-btn close-btn"
-                                onClick={() => setIsOpen(false)}
-                                title="Đóng"
-                                id="chatbot-close-btn"
-                            >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                    <line x1="18" y1="6" x2="6" y2="18" />
-                                    <line x1="6" y1="6" x2="18" y2="18" />
-                                </svg>
-                            </button>
+                            {!isEmbedded && (
+                                <button
+                                    className="header-btn close-btn"
+                                    onClick={() => setIsOpen(false)}
+                                    title="Đóng"
+                                    id="chatbot-close-btn"
+                                >
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                        <line x1="18" y1="6" x2="6" y2="18" />
+                                        <line x1="6" y1="6" x2="18" y2="18" />
+                                    </svg>
+                                </button>
+                            )}
                         </div>
                     </div>
 
@@ -274,10 +278,10 @@ const AIChatbot = () => {
 
                                     {msg.suggestions && msg.suggestions.length > 0 && (
                                         <div className="suggestions-container">
-                                            {msg.suggestions.map((book, bIdx) => (
+                                            {msg.suggestions.filter(s => s.book_id).map((book, bIdx) => (
                                                 <div key={bIdx} className="book-card" onClick={() => navigate(`/books/${book.book_id}`)}>
-                                                    <h4>{book.title}</h4>
-                                                    <p>{book.author}</p>
+                                                    <h4>{book.title || 'Sách không tên'}</h4>
+                                                    <p>{book.author || 'Tác giả ẩn danh'}</p>
                                                     <span className={`status-badge ${book.status === 'AVAILABLE' ? 'status-available' : 'status-borrowed'}`}>
                                                         {book.status === 'AVAILABLE' ? 'Sẵn sàng' : 'Đã mượn'}
                                                     </span>

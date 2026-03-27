@@ -72,14 +72,16 @@ class BarcodeReader:
         ]
         self._symbol_types = self._get_symbol_types()
         
-        # Fallback detector
+        # Fallback detectors
         self.cv2_barcode_detector = None
+        self.cv2_qr_detector = None
         if not PYZBAR_AVAILABLE:
             try:
                 self.cv2_barcode_detector = cv2.barcode.BarcodeDetector()
-                logger.info("Using OpenCV BarcodeDetector as fallback.")
+                self.cv2_qr_detector = cv2.QRCodeDetector()
+                logger.info("Using OpenCV Barcode & QR Detectors as fallback.")
             except AttributeError:
-                logger.warning("cv2.barcode not available. Barcode reading will be disabled.")
+                logger.warning("cv2.barcode/QRCodeDetector not available. Barcode reading will be limited.")
         
     def _get_symbol_types(self) -> Optional[List]:
         """Get pyzbar symbol types for filtering."""
@@ -166,36 +168,86 @@ class BarcodeReader:
         return results
     
     def _read_with_cv2(self, image: np.ndarray) -> List[BarcodeResult]:
-        """Fallback reading using OpenCV BarcodeDetector."""
-        if not self.cv2_barcode_detector:
-            return []
-            
+        """Fallback reading using OpenCV BarcodeDetector and QRCodeDetector."""
         results = []
-        # BarcodeDetector.detectAndDecode returns (ret, decoded_info, points, type)
-        try:
-            ret, decoded_info, points, types = self.cv2_barcode_detector.detectAndDecode(image)
-            
-            if ret:
-                for i in range(len(decoded_info)):
-                    data = decoded_info[i].strip()
-                    if not data:
-                        continue
+        
+        # 1. Try BarcodeDetector (1D)
+        if self.cv2_barcode_detector:
+            try:
+                # detectAndDecode can return None or a tuple of (3 or 4 values)
+                decoded = self.cv2_barcode_detector.detectAndDecode(image)
+                
+                if decoded is not None and isinstance(decoded, (tuple, list)):
+                    if len(decoded) == 4:
+                        ret, decoded_info, points, types = decoded
+                    elif len(decoded) == 3:
+                        ret, decoded_info, points = decoded
+                        types = ["UNKNOWN"] * (len(decoded_info) if decoded_info is not None else 0)
+                    else:
+                        ret = False
+                        logger.debug(f"OpenCV barcode return unexpected length: {len(decoded)}")
+                else:
+                    ret = False
+                
+                if ret and decoded_info:
+                    for i in range(len(decoded_info)):
+                        data = decoded_info[i].strip()
+                        if not data: continue
+                            
+                        pts = points[i].astype(int)
+                        x = int(np.min(pts[:, 0]))
+                        y = int(np.min(pts[:, 1]))
+                        w = int(np.max(pts[:, 0]) - x)
+                        h = int(np.max(pts[:, 1]) - y)
                         
-                    # OpenCV points are (4, 2)
-                    pts = points[i].astype(int)
-                    x = int(np.min(pts[:, 0]))
-                    y = int(np.min(pts[:, 1]))
-                    w = int(np.max(pts[:, 0]) - x)
-                    h = int(np.max(pts[:, 1]) - y)
-                    
-                    results.append(BarcodeResult(
-                        data=data,
-                        barcode_type=str(types[i]),
-                        bbox=(x, y, w, h),
-                        confidence=0.9  # Fixed confidence for CV2
-                    ))
-        except Exception as e:
-            logger.debug(f"OpenCV barcode decode error: {e}")
+                        results.append(BarcodeResult(
+                            data=data,
+                            barcode_type=str(types[i]),
+                            bbox=(x, y, w, h),
+                            confidence=0.8
+                        ))
+            except Exception as e:
+                logger.debug(f"OpenCV barcode decode error: {e}")
+
+        # 2. Try QRCodeDetector (2D) - Critical for books with QR codes
+        if self.cv2_qr_detector:
+            try:
+                ret, decoded_info, points, straight_qrcode = self.cv2_qr_detector.detectAndDecodeMulti(image)
+                if ret:
+                    for i in range(len(decoded_info)):
+                        data = decoded_info[i].strip()
+                        if not data: continue
+                        
+                        pts = points[i].astype(int)
+                        x = int(np.min(pts[:, 0]))
+                        y = int(np.min(pts[:, 1]))
+                        w = int(np.max(pts[:, 0]) - x)
+                        h = int(np.max(pts[:, 1]) - y)
+                        
+                        results.append(BarcodeResult(
+                            data=data,
+                            barcode_type="QRCODE",
+                            bbox=(x, y, w, h),
+                            confidence=0.9
+                        ))
+            except Exception as e:
+                # Some OpenCV versions might not have detectAndDecodeMulti
+                try:
+                    data, points, straight_qrcode = self.cv2_qr_detector.detectAndDecode(image)
+                    if data:
+                        pts = points[0].astype(int)
+                        x = int(np.min(pts[:, 0]))
+                        y = int(np.min(pts[:, 1]))
+                        w = int(np.max(pts[:, 0]) - x)
+                        h = int(np.max(pts[:, 1]) - y)
+                        results.append(BarcodeResult(
+                            data=data.strip(),
+                            barcode_type="QRCODE",
+                            bbox=(x, y, w, h),
+                            confidence=0.9
+                        ))
+                except Exception as e2:
+                    logger.debug(f"OpenCV QR decode error: {e2}")
             
         return results
 

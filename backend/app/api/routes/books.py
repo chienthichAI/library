@@ -15,8 +15,10 @@ from app.database import get_db
 from app.models.book import Book, BookStatus
 from app.schemas.book import BookCreate, BookUpdate, BookResponse, BookIdentificationResponse
 from app.services.book_identification_service import BookIdentificationService
-from functools import lru_cache
+from app.services.rag_service import rag_service
+from app.services.embedding_service import embedding_service
 from app.core.face_session import require_admin_session
+from functools import lru_cache
 
 router = APIRouter(prefix="/books", tags=["Books"])
 
@@ -123,13 +125,59 @@ async def list_books(
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"Trạng thái không hợp lệ: {status}")
 
-        if search:
+        if search and len(search.strip()) > 2:
+            try:
+                # 1. Generate embedding for query
+                query_embedding = await embedding_service.embed(search)
+                
+                # 2. Use Hybrid Search (Semantic + Lexical + Categories)
+                # This will find "Sách Tiếng Anh" even if the title is just "English 101"
+                hybrid_books = await rag_service.search_books_hybrid(
+                    db=db,
+                    query_text=search,
+                    query_embedding=query_embedding,
+                    top_k=limit,
+                    intent="book_search"
+                )
+                
+                # The schema expects Book models or objects with same attributes
+                # Since search_books_hybrid returns dicts, we need to ensure pagination counts
+                # For search results, we often just return what we find
+                return {
+                    "total": len(hybrid_books),
+                    "limit": limit,
+                    "offset": 0,
+                    "books": hybrid_books
+                }
+            except Exception as e:
+                from loguru import logger
+                logger.warning(f"Semantic search fallback to keyword search: {e}")
+                # FALLBACK to standard select logic already below
+                pattern = f"%{search.strip()}%"
+                condition = or_(
+                    Book.title.ilike(pattern),
+                    Book.author.ilike(pattern),
+                    Book.book_id.ilike(pattern),
+                    Book.barcode.ilike(pattern),
+                    Book.subject_category.ilike(pattern),
+                    Book.smart_category.ilike(pattern),
+                    Book.ai_category.ilike(pattern),
+                    Book.publisher.ilike(pattern)
+                )
+                stmt = stmt.where(condition)
+                count_stmt = count_stmt.where(condition)
+        elif search:
+            # Fallback for short search terms
             pattern = f"%{search.strip()}%"
             condition = or_(
                 Book.title.ilike(pattern),
                 Book.author.ilike(pattern),
                 Book.book_id.ilike(pattern),
-                Book.barcode.ilike(pattern)
+                Book.barcode.ilike(pattern),
+                Book.subject_category.ilike(pattern),
+                Book.smart_category.ilike(pattern),
+                Book.ai_category.ilike(pattern),
+                Book.publisher.ilike(pattern)
             )
             stmt = stmt.where(condition)
             count_stmt = count_stmt.where(condition)

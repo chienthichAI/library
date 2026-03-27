@@ -257,6 +257,8 @@ class BookDetector:
                     class_name = result.names[class_id]
                 else:
                     class_name = self.classes.get(class_id, f"class_{class_id}")
+                
+                logger.debug(f"YOLO detected: {class_name} (ID: {class_id}) with confidence {confidence:.2f}")
                     
                 detected = DetectedObject(
                     class_name=class_name,
@@ -266,14 +268,13 @@ class BookDetector:
                 )
                 
                 # Categorize by class
-                if class_name.lower() in ["book", "cover"]:
+                cn_lower = class_name.lower()
+                if cn_lower in ["book", "cover", "sách", "bia sách"]:
                     books.append(detected)
-                elif class_name.lower() in ["barcode", "qr", "isbn"]:
+                elif cn_lower in ["barcode", "qr", "isbn", "mã vạch"]:
                     barcodes.append(detected)
-                else:
-                    # Treat as book by default for pre-trained COCO model
-                    if class_name.lower() == "book":
-                        books.append(detected)
+                elif class_id == 0: # Common for many models to have 'book' at ID 0
+                    books.append(detected)
                         
         return BookDetectionResult(books=books, barcodes=barcodes, processing_time_ms=0)
     

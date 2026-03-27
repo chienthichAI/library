@@ -64,14 +64,16 @@ class BookIdentificationService:
         """Initialize book identification service with pre-loaded components."""
         self.book_detector = book_detector or AIModels.book_detector or BookDetector()
         self.barcode_reader = barcode_reader or BarcodeReader()
-        # OCR Service is no longer used for book identification as per user request
-        self.ocr_service = None # or AIModels.ocr_service or OCRService()
+        # Re-enabled OCR as fallback for cases where barcode reading fails
+        from app.ml.ocr_service import OCRService
+        self.ocr_service = AIModels.ocr_service or OCRService()
         
     async def initialize(self) -> bool:
         """Models are now initialized via lifespan + AIModels container."""
         if not self.book_detector._initialized:
             self.book_detector.initialize()
-        # OCR initialization skipped as it's disabled
+        if self.ocr_service and not getattr(self.ocr_service, '_initialized', False):
+            self.ocr_service.initialize()
         return True
     
     async def identify(
@@ -108,7 +110,8 @@ class BookIdentificationService:
                 logger.info("No book detected by YOLO, falling back to full image processing.")
             
             # Step 2: Try barcode reading (primary and fastest method)
-            barcode_result = await self._read_barcode(book_image)
+            # Pass detection_result to allow targeted scanning of YOLO-detected barcodes
+            barcode_result = await self._read_barcode(book_image, detection_result, image)
             
             book = None
             book_id = None
@@ -123,7 +126,23 @@ class BookIdentificationService:
                     logger.info(f"Book found via barcode: {book.title}")
             
             if not book:
-                # Return partial result if barcode not found (OCR backup removed)
+                # Pass 2: Try OCR fallback if barcode reading failed (Critical for GT/TK prefixes)
+                if self.ocr_service:
+                    logger.info("Barcode read failed, trying OCR fallback...")
+                    ocr_results = await asyncio.to_thread(self.ocr_service.extract_text, book_image)
+                    for res in ocr_results:
+                        text = res.text.strip().upper()
+                        # Match GT/TK format or ISBN-like strings
+                        if "/" in text or len(text) >= 10:
+                            logger.info(f"Checking OCR candidate: {text}")
+                            book = await self._lookup_book(text, db)
+                            if book:
+                                book_id = text
+                                logger.info(f"Book identified via OCR: {book.title}")
+                                break
+            
+            if not book:
+                # Return partial result if book not found
                 return BookIdentificationResult(
                     success=False,
                     book_id=book_id,
@@ -134,7 +153,7 @@ class BookIdentificationService:
                     detection_confidence=detection_confidence,
                     barcode_confidence=barcode_confidence,
                     ocr_confidence=0.0,
-                    error_message="Không tìm thấy sách qua barcode hoặc sách chưa có trong hệ thống",
+                    error_message=f"Không tìm thấy sách. Đã thử quét Barcode và OCR ({book_id or '?'}).",
                     processing_time_ms=(time.time() - start_time) * 1000,
                     book_exists=False,
                     subject_category=None,
@@ -177,18 +196,32 @@ class BookIdentificationService:
     
     async def _read_barcode(
         self,
-        image: np.ndarray
+        book_image: np.ndarray,
+        detection_result: Optional[BookDetectionResult] = None,
+        full_image: Optional[np.ndarray] = None
     ) -> Optional[BarcodeResult]:
-        """Ultra-robust barcode reading with multiple image enhancement passes."""
-        # Pass 1: Raw image (Fastest)
-        barcodes = await asyncio.to_thread(self.barcode_reader.read, image)
+        """Ultra-robust barcode reading with targeted YOLO scanning and image enhancement."""
+        
+        # Pass 0: Targeted YOLO detections (Most accurate if YOLO found it)
+        if detection_result and detection_result.has_barcode and full_image is not None:
+            logger.info(f"Targeting {len(detection_result.barcodes)} YOLO-detected barcode regions")
+            for bc_obj in detection_result.barcodes:
+                # Crop with some padding
+                bc_crop = self.book_detector.crop_detection(full_image, bc_obj, padding=0.2)
+                barcodes = await asyncio.to_thread(self.barcode_reader.read, bc_crop)
+                if barcodes:
+                    best = self._pick_best_barcode(barcodes)
+                    logger.info(f"YOLO-targeted barcode read success: {best.data}")
+                    return best
+
+        # Pass 1: Raw book image (Fastest)
+        barcodes = await asyncio.to_thread(self.barcode_reader.read, book_image)
         if barcodes: return self._pick_best_barcode(barcodes)
         
         # Convert to gray for enhancements
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(book_image, cv2.COLOR_BGR2GRAY)
         
-        # Pass 2: Brightness boost (Helpful for dark environments like yours)
-        # Increase brightness and contrast
+        # Pass 2: Brightness boost (Helpful for dark environments)
         bright = cv2.convertScaleAbs(gray, alpha=1.5, beta=30)
         barcodes = await asyncio.to_thread(self.barcode_reader.read, bright)
         if barcodes: return self._pick_best_barcode(barcodes)
@@ -198,7 +231,7 @@ class BookIdentificationService:
         barcodes = await asyncio.to_thread(self.barcode_reader.read, thresh)
         if barcodes: return self._pick_best_barcode(barcodes)
         
-        # Pass 4: CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        # Pass 4: CLAHE
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
         cl1 = clahe.apply(gray)
         barcodes = await asyncio.to_thread(self.barcode_reader.read, cl1)
@@ -231,6 +264,8 @@ class BookIdentificationService:
             if isbn13:
                 candidates.add(isbn13)
 
+        logger.info(f"Searching database for book candidates: {candidates}")
+
         # 1) Exact match against all identifiers
         stmt = select(Book).where(
             or_(
@@ -243,6 +278,7 @@ class BookIdentificationService:
         result = await db.execute(stmt)
         book = result.scalar_one_or_none()
         if book:
+            logger.info(f"Database hit (exact match): {book.title} (ID: {book.book_id})")
             return book
 
         # 2) Normalized match: ignore spaces/hyphens/case in DB identifiers

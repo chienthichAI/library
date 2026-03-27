@@ -76,7 +76,7 @@ def chunk_by_section(text: str, max_chunk_size: int = CHUNK_SIZE) -> list[dict]:
 
 async def main():
     print("=" * 60)
-    print("SmartLib - Library Policy Indexer (Standardized 768d)")
+    print("SmartLib - Library Policy Indexer (Standardized 1024d)")
     print("=" * 60)
 
     # 1. Load policy file
@@ -123,7 +123,7 @@ async def main():
                     )
                     db.add(chunk)
                     success_count += 1
-                    print("✅ (768d)")
+                    print("✅ (1024d)")
                 else:
                     print("❌ (No embedding)")
             except Exception as e:
@@ -131,7 +131,7 @@ async def main():
         
         await db.commit()
 
-    print(f"\n🎉 Done! Indexed {success_count}/{len(chunks)} policy chunks with 768d vectors.")
+    print(f"\n🎉 Done! Indexed {success_count}/{len(chunks)} policy chunks with 1024d vectors.")
     await engine.dispose()
 
 

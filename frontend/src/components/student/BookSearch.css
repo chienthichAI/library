@@ -1,0 +1,274 @@
+/* Professional Search Bar Styles - Glassmorphism & Dark Mode Inspired */
+.book-search-container {
+    position: relative;
+    width: 100%;
+    max-width: 800px;
+    margin: 50px auto;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    z-index: 1000;
+}
+
+.search-input-wrapper {
+    display: flex;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 20px;
+    padding: 14px 22px;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    position: relative;
+    z-index: 1002;
+}
+
+.search-input-wrapper:focus-within,
+.search-input-wrapper.active {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(59, 130, 246, 0.4);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.4), 
+                0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+/* When suggestions are open, flatten the bottom corners */
+.search-input-wrapper.active {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+.search-icon {
+    color: rgba(255, 255, 255, 0.25);
+    margin-right: 18px;
+    display: flex;
+    align-items: center;
+    transition: color 0.3s;
+    background: none !important;
+}
+
+.search-input-wrapper:focus-within .search-icon {
+    color: #3b82f6;
+}
+
+.search-input {
+    flex: 1;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    color: #ffffff;
+    font-size: 1.05rem;
+    outline: none !important;
+    padding: 8px 0;
+    font-weight: 400;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.search-input::placeholder {
+    color: rgba(255, 255, 255, 0.25);
+}
+
+.clear-btn {
+    background: transparent !important;
+    border: none;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.2);
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    margin-left: 8px;
+}
+
+.clear-btn:hover {
+    color: #ef4444;
+    transform: rotate(90deg) scale(1.1);
+}
+
+/* Suggestions Dropdown */
+.suggestions-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: rgba(15, 23, 42, 0.85); /* Slightly more transparent */
+    backdrop-filter: blur(25px);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    border-top: none;
+    border-bottom-left-radius: 20px;
+    border-bottom-right-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    z-index: 1001;
+    animation: dropdownOpen 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dropdownOpen {
+    from { 
+        opacity: 0; 
+        transform: translateY(-10px) scaleY(0.95);
+        transform-origin: top; 
+    }
+    to { 
+        opacity: 1; 
+        transform: translateY(0) scaleY(1);
+    }
+}
+
+.suggestions-list {
+    max-height: 480px;
+    overflow-y: auto;
+}
+
+.suggestion-item {
+    padding: 18px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.suggestion-item:last-child {
+    border-bottom: none;
+}
+
+.suggestion-item:hover,
+.suggestion-item.active {
+    background: rgba(59, 130, 246, 0.15);
+}
+
+.book-title {
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 1.1rem;
+    display: block;
+    margin-bottom: 6px;
+}
+
+.status-badge {
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    height: fit-content;
+}
+
+.book-title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 15px;
+    margin-bottom: 8px;
+}
+
+.book-author {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.95rem;
+    line-height: 1.4;
+}
+
+.status-badge.available {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.status-badge.borrowed {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.book-author-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.book-author {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.9rem;
+}
+
+.book-id {
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 0.75rem;
+    font-family: monospace;
+}
+
+.suggestion-arrow {
+    color: rgba(255, 255, 255, 0.2);
+    transition: transform 0.2s;
+}
+
+.suggestion-item:hover .suggestion-arrow {
+    color: #3b82f6;
+    transform: translateX(3px);
+}
+
+/* Status Messages */
+.suggestion-status {
+    padding: 30px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.5);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+}
+
+.loader-dot {
+    width: 24px;
+    height: 24px;
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+.suggestion-footer {
+    padding: 10px 20px;
+    background: rgba(0, 0, 0, 0.2);
+    color: rgba(255, 255, 255, 0.3);
+    font-size: 0.75rem;
+    text-align: center;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Animations */
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+/* Scrollbar styling */
+.suggestions-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.suggestions-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.suggestions-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+}
+
+.suggestions-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(59, 130, 246, 0.3);
+}

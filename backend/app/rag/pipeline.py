@@ -43,15 +43,15 @@ Nhiệm vụ chính:
 
 Thông tin thư viện SmartLib:
 - Giờ mở cửa: 
-  + Thứ 2 - Thứ 6: 7:30 - 21:00 (Phục vụ mượn trả & phòng tự học)
+  + Thứ 2 - Thứ 6: 7:30 - 18:00 (Phục vụ mượn trả & phòng tự học)
   + Thứ 7: 8:00 - 17:00
   + Chủ nhật & Ngày lễ: Nghỉ
 - Hạn mức mượn: 
-  + Tối đa 5 cuốn sách/sinh viên.
+  + Tối đa 5 cuốn sách/sinh viên (TUYỆT ĐỐI KHÔNG ĐƯỢC GHI SAI CON SỐ NÀY).
   + Thời hạn: 14 ngày (có thể gia hạn thêm 7 ngày qua ứng dụng di động hoặc tại Kiosk).
 - Phí phạt & Đền bù:
-  + Trả muộn: 2.000đ/ngày/cuốn.
-  + Mất sách/Hư hỏng nặng: Đền bù 150% giá trị sách theo giá thị trường hiện tại.
+  + Trả muộn: 5.000 VNĐ/ngày/cuốn (Theo quy định mới nhất).
+  + Mất sách/Hư hỏng nặng: Đền bù 100% giá trị sách + phí xử lý.
   
 
 Quy trình mượn sách tại Kiosk:
@@ -121,7 +121,7 @@ class RAGPipeline:
             (re.compile(r"(mượn|borrowing).*(tối đa|bao nhiêu)|hạn mức mượn", re.I),
              "Hạn mức mượn: tối đa 5 cuốn/sinh viên. Thời hạn mượn 14 ngày (có thể gia hạn thêm 7 ngày)."),
             (re.compile(r"(phạt|fine).*(trễ|muộn)|trả muộn", re.I),
-             "Phí phạt trả muộn: 2.000đ/ngày/cuốn. Nếu mất/hỏng nặng: đền bù 150% giá trị sách."),
+             "Phí phạt trả sách quá hạn là 10.000 VNĐ/ngày/quyển. Vui lòng trả sách đúng hạn để tránh phát sinh chi phí."),
             (re.compile(r"quy trình.*mượn|mượn sách.*kiosk", re.I),
              "Quy trình mượn sách tại Kiosk:\n- Xác thực khuôn mặt\n- Đặt sách lên bàn quét AI\n- Kiểm tra danh sách sách\n- Bấm 'Xác nhận mượn'\n- Nhận biên lai điện tử qua email"),
             (re.compile(r"quy trình.*trả|trả sách.*kiosk", re.I),
@@ -134,10 +134,10 @@ class RAGPipeline:
         emb = self._get_embeddings()
         faqs = [
             ("Giờ mở cửa thư viện?", "Thứ 2-6: 7:30-21:00; Thứ 7: 8:00-17:00; CN/ngày lễ nghỉ."),
-            ("Hạn mức mượn sách là bao nhiêu?", "Tối đa 5 cuốn/sinh viên. Thời hạn 14 ngày; có thể gia hạn 7 ngày."),
-            ("Phí phạt trả muộn tính thế nào?", "2.000đ/ngày/cuốn. Mất/hỏng nặng: đền 150% giá trị sách."),
-            ("Quy trình mượn sách ở kiosk?", "Xác thực FaceID → đặt sách lên bàn quét → kiểm tra → xác nhận mượn."),
-            ("Quy trình trả sách ở kiosk?", "Xác thực FaceID → xác nhận → đặt sách vào khay → trả thành công → xử lý phí phạt nếu có."),
+            ("Hạn mức mượn sách là bao nhiêu?", "Mỗi sinh viên được mượn tối đa 5 cuốn sách cùng một lúc. Thời hạn 14 ngày."),
+            ("Phí phạt trả muộn tính thế nào?", "Phí phạt trả sách quá hạn: 5.000 VNĐ/ngày/quyển."),
+            ("Quy trình mượn sách ở kiosk?", "Xác thực FaceID → đặt sách lên bàn quét AI → kiểm tra → xác nhận mượn."),
+            ("Quy trình trả sách ở kiosk?", "Xác thực FaceID → đặt sách vào bàn trả → hệ thống ghi nhận trả thành công."),
         ]
         docs = [
             Document(page_content=f"Q: {q}\nA: {a}", metadata={"type": "faq", "q": q})
@@ -308,9 +308,9 @@ class RAGPipeline:
                 else:
                     safe_embedding = list(embedding)
                 
-                # Verify dimension (must be 768 for vietnamese-sbert)
-                if len(safe_embedding) != 768:
-                    logger.warning(f"Embedding dimension mismatch: expected 768, got {len(safe_embedding)}. Skipping vector save.")
+                # Verify dimension (must be 1024 standardized)
+                if len(safe_embedding) != 1024:
+                    logger.warning(f"Embedding dimension mismatch: expected 1024, got {len(safe_embedding)}. Skipping vector save.")
                     safe_embedding = None
 
 

@@ -45,8 +45,22 @@ export default function RegistrationFlow() {
             })
 
             if (!studentResponse.ok) {
-                const err = await studentResponse.json()
-                throw new Error(err.detail || 'Không thể tạo tài khoản sinh viên')
+                const err = await studentResponse.json().catch(() => ({}))
+                const detail = err?.detail
+                let message = 'Không thể tạo tài khoản sinh viên'
+
+                if (typeof detail === 'string') {
+                    message = detail
+                } else if (Array.isArray(detail) && detail.length > 0) {
+                    // FastAPI/Pydantic validation errors
+                    message = detail
+                        .map((d) => d?.msg || d?.message || JSON.stringify(d))
+                        .join('; ')
+                } else if (detail && typeof detail === 'object') {
+                    message = JSON.stringify(detail)
+                }
+
+                throw new Error(message)
             }
 
             const student = await studentResponse.json()

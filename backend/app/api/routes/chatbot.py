@@ -21,6 +21,10 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     answer: str
+    intent: Optional[str] = None
+    entities: Optional[dict] = None
+    suggestions: Optional[List[dict]] = None
+    session_id: Optional[str] = None
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat_with_bot(
@@ -43,8 +47,14 @@ async def chat_with_bot(
             student_id=student_id
         )
         
-        # Map 'reply' from ChatService to 'answer' for legacy compatibility
-        return {"answer": result.get("reply", "Xin lỗi, mình không tìm thấy câu trả lời.")}
+        # Return full result metadata for the UI to specialize rendering
+        return {
+            "answer": result.get("reply", "Xin lỗi, mình không tìm thấy câu trả lời."),
+            "intent": result.get("intent"),
+            "entities": result.get("entities"),
+            "suggestions": result.get("sources"),
+            "session_id": session_id
+        }
     except Exception as e:
         import traceback
         from loguru import logger

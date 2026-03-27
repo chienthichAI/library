@@ -174,7 +174,6 @@ async def get_student_borrowing_info(
 async def create_student(
     student: StudentCreate,
     db: AsyncSession = Depends(get_db),
-    _claims=Depends(require_admin_session)
 ):
     """Create a new student account."""
     try:

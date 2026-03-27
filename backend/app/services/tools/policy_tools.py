@@ -82,6 +82,6 @@ def _get_general_policy_summary() -> str:
 - ⏰ Thời hạn mượn tiêu chuẩn: **14 ngày**
 - 🔄 Gia hạn tối đa **2 lần**, mỗi lần thêm **7 ngày**
 - 💰 Phí phạt quá hạn: **10.000 VNĐ/ngày/quyển**
-- 🕐 Giờ mở cửa: Thứ 2-6: 7:00-21:00 | Thứ 7: 8:00-17:00 | CN: Đóng cửa
+- 🕐 Giờ mở cửa: Thứ 2-6: 7:30-18:00 | Thứ 7: 8:00-17:00 | CN: Đóng cửa
 
 💡 Để xem quy định chính xác và đầy đủ nhất, vui lòng liên hệ thủ thư hoặc hỏi lại mình khi hệ thống ổn định."""

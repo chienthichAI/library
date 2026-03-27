@@ -143,7 +143,7 @@ export default function VerificationScreen() {
                     if (student.role === 'ADMIN') {
                         navigate('/admin', { state: { admin: student } })
                     } else {
-                        navigate('/return', { state: { student } })
+                        navigate('/dashboard_student', { state: { student } })
                     }
                 }, 3000)
             } else if (result.status === "no_face_detected" || result.status === "no_prominent_face") {
@@ -374,7 +374,7 @@ export default function VerificationScreen() {
         if (verifiedStudent.role === 'ADMIN') {
             navigate('/admin', { state: { admin: verifiedStudent } })
         } else {
-            navigate('/return', { state: { student: verifiedStudent } })
+            navigate('/dashboard_student', { state: { student: verifiedStudent } })
         }
     }
 

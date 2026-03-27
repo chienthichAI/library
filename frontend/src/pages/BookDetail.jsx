@@ -46,11 +46,21 @@ export default function BookDetail() {
     }
 
     return (
-        <div className="book-detail-container animate-fade-in">
-            <header className="detail-header">
-                <button className="back-btn" onClick={() => navigate(-1)}>← Quay lại</button>
-                <h1>Thông tin sách</h1>
-            </header>
+        <div className="book-detail-page animate-fade-in">
+            <div className="detail-top-bar">
+                <button className="back-navigation-btn" onClick={() => navigate(-1)}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="19" y1="12" x2="5" y2="12" />
+                        <polyline points="12 19 5 12 12 5" />
+                    </svg>
+                    Quay lại
+                </button>
+            </div>
+
+            <div className="book-detail-container">
+                <header className="detail-header">
+                    <h1>Thông tin sách</h1>
+                </header>
 
             <main className="detail-content">
                 <div className="book-hero">
@@ -94,6 +104,7 @@ export default function BookDetail() {
                     </div>
                 )}
             </main>
+            </div>
         </div>
     )
 }

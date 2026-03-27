@@ -1,0 +1,81 @@
+.student-dashboard-layout {
+    display: flex;
+    width: 100%;
+    height: 100vh;
+    background: #0a1128;
+    color: white;
+    overflow: hidden;
+}
+
+.dashboard-main-content {
+    flex: 1;
+    height: 100vh;
+    overflow-y: auto;
+    position: relative;
+    background: radial-gradient(circle at top right, rgba(29, 78, 216, 0.1) 0%, transparent 40%),
+                radial-gradient(circle at bottom left, rgba(30, 64, 175, 0.1) 0%, transparent 40%);
+}
+
+.dashboard-view, .dashboard-content {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.search-view {
+    padding: 0;
+}
+
+.ai-view {
+    padding: 0;
+}
+
+.view-header {
+    padding: 24px 32px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.view-header h1 {
+    font-size: 1.8rem;
+    font-weight: 700;
+    margin: 0 0 8px 0;
+    color: #f8fafc;
+    letter-spacing: -0.02em;
+}
+
+.view-subtitle {
+    margin: 0;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.95rem;
+}
+
+.view-content, .view-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+}
+
+.dashboard-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.dashboard-placeholder h2 {
+    color: white;
+    margin-bottom: 10px;
+}
+
+/* Transitions */
+.animate-fade-in {
+    animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}

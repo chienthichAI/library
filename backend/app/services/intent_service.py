@@ -24,12 +24,12 @@ Hãy phân loại câu hỏi của người dùng vào 1 trong các loại sau:
 
 1. book_search: Tìm sách, gợi ý sách, hỏi về chủ đề (VD: "Tìm sách Python", "Sách của AI").
 2. stock_check: Hỏi về vị trí, còn sách không, ai đang mượn (VD: "Cuốn Java còn không?", "Sách ở kệ nào?").
-3. debt_check: Kiểm tra nợ, tiền phạt, thông tin cá nhân của mình, sách đang mượn (VD: "Mình nợ bao nhiêu", "Thông tin tôi", "Sách mình đang mượn").
+3. debt_check: Tra cứu tiền phạt, nợ sách, các khoản phí (VD: "Mình nợ bao nhiêu", "Đã đóng phạt chưa").
 4. policy_query: Quy định, giờ mở cửa, cách làm thẻ, hạn mượn (VD: "Mở cửa đến mấy giờ?", "Mượn được bao lâu?").
 5. renew_book: Gia hạn sách đang mượn (VD: "Cho mình gia hạn", "Mượn thêm thời gian").
 6. reserve_book: Đặt trước sách (VD: "Đặt trước cuốn Python").
 7. return_book: Hỏi về thủ tục trả sách hoặc thông báo trả sách (VD: "Muốn trả sách", "Thủ tục trả sách thế nào").
-8. general_chat: Chào hỏi, cảm ơn, tán gẫu (VD: "Chào bạn", "Cảm ơn").
+8. general_chat: Chào hỏi, cảm ơn, tán gẫu, hỏi về danh tính bản thân hoặc chatbot (VD: "Chào bạn", "Tôi là ai", "Bạn tên gì").
 
 # ĐỊNH DẠNG TRẢ VỀ (JSON ONLY):
 {

@@ -10,6 +10,7 @@ from app.ml.face_recognition import FaceRecognizer
 from app.ml.anti_spoofing import AntiSpoofing
 from app.ml.book_detector import BookDetector
 from app.ml.faiss_engine import FaissEngine
+from app.ml.ocr_service import OCRService
 from app.config import settings
 
 class AIModels:
@@ -19,6 +20,7 @@ class AIModels:
     anti_spoofing: Optional[AntiSpoofing] = None
     book_detector: Optional[BookDetector] = None
     faiss_engine: Optional[FaissEngine] = None
+    ocr_service: Optional[OCRService] = None
     # Future: llm_service can be added here
 
 async def init_ai_models():
@@ -55,12 +57,20 @@ async def init_ai_models():
     # 5. Book Detector (YOLOv8)
     AIModels.book_detector = BookDetector(
         model_path=settings.yolo_model_path,
+        conf_threshold=settings.book_detection_confidence,
         use_gpu=settings.use_gpu
     )
     if not AIModels.book_detector.initialize():
         raise RuntimeError("Book detector initialization failed")
     
-    # 6. FAISS Search Engine
+    # 6. OCR Service (PaddleOCR) - Optimized for fallback
+    AIModels.ocr_service = OCRService(
+        lang=settings.ocr_lang,
+        use_gpu=settings.use_gpu
+    )
+    AIModels.ocr_service.initialize()
+    
+    # 7. FAISS Search Engine
     AIModels.faiss_engine = FaissEngine()
     
     # Warm up models with dummy input (avoids first-request lag)

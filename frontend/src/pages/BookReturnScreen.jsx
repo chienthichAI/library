@@ -3,13 +3,18 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { API_URL } from '../config'
 import './BookReturnScreen.css'
 
-export default function BookReturnScreen() {
+export default function BookReturnScreen({ isEmbedded = false }) {
     const navigate = useNavigate()
     const location = useLocation()
-    const student = location.state?.student
+    const student = location.state?.student || { 
+        id: sessionStorage.getItem('smartlib_student_id'),
+        name: sessionStorage.getItem('smartlib_student_name'),
+        verification_token: student?.verification_token // Might need to store this in session too
+    }
 
     const [isStreaming, setIsStreaming] = useState(false)
     const [detectionStatus, setDetectionStatus] = useState('idle') // idle, detecting, found, not_found
+    const [transactionMode, setTransactionMode] = useState(null) // null, borrow, return
     const [isProcessing, setIsProcessing] = useState(false)
     const [borrowingInfo, setBorrowingInfo] = useState(null)
     const [detectedBook, setDetectedBook] = useState(null)
@@ -29,7 +34,7 @@ export default function BookReturnScreen() {
     const faceStreamRef = useRef(null)
 
     useEffect(() => {
-        if (!student) {
+        if (!student?.id && !isEmbedded) {
             navigate('/verify')
             return
         }
@@ -315,38 +320,68 @@ export default function BookReturnScreen() {
         setDetectedBook(null)
         setTransactionResult(null)
         setDetectionError('')
+        // Only reset mode if it's a completely new start, otherwise keep it for continuous scanning
+    }
+
+    const handleChangeMode = () => {
+        handleReset()
+        setTransactionMode(null)
     }
 
     if (!student) return null
 
     return (
-        <div className="book-return-screen">
-            <header className="book-header">
-                <button className="back-btn" onClick={() => navigate('/')}>
-                    ← Trang chủ
-                </button>
-                <div className="student-info-bar">
-                    <div className="security-cam-mini">
-                        <video ref={faceVideoRef} autoPlay playsInline muted />
-                        <div className="rec-dot"></div>
-                    </div>
-                    <span>👤 {student.name}</span>
-                    <span className="muted">({student.id})</span>
-                    {borrowingInfo && (
-                        <div className="borrowing-stats">
-                            <span className="stat-badge">📚 {borrowingInfo.currently_borrowed}/{borrowingInfo.max_books} cuốn</span>
-                            {borrowingInfo.fine_balance > 0 && (
-                                <span className="stat-badge danger">💰 {borrowingInfo.fine_balance.toLocaleString('vi-VN')} VND</span>
-                            )}
+        <div className={`book-return-screen ${isEmbedded ? 'embedded' : ''}`}>
+            {!isEmbedded && (
+                <header className="book-header">
+                    <button className="back-btn" onClick={() => navigate('/')}>
+                        ← Trang chủ
+                    </button>
+                    <div className="student-info-bar">
+                        <div className="security-cam-mini">
+                            <video ref={faceVideoRef} autoPlay playsInline muted />
+                            <div className="rec-dot"></div>
                         </div>
-                    )}
-                </div>
-                <div className="spacer"></div>
-            </header>
+                        <span>👤 {student.name}</span>
+                        <span className="muted">({student.id})</span>
+                        {borrowingInfo && (
+                            <div className="borrowing-stats">
+                                <span className="stat-badge">📚 {borrowingInfo.currently_borrowed}/{borrowingInfo.max_books} cuốn</span>
+                                {borrowingInfo.fine_balance > 0 && (
+                                    <span className="stat-badge danger">💰 {borrowingInfo.fine_balance.toLocaleString('vi-VN')} VND</span>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </header>
+            )}
 
             <main className="book-content-layout">
+                {/* Mode Selection Overlay */}
+                {!transactionMode && (
+                    <div className="mode-selection-overlay animate-fade-in">
+                        <div className="mode-selection-container">
+                            <h2>Bạn muốn thực hiện giao dịch gì?</h2>
+                            <div className="mode-options">
+                                <div className="mode-card borrow" onClick={() => setTransactionMode('borrow')}>
+                                    <div className="mode-icon">📚</div>
+                                    <h3>MƯỢN SÁCH</h3>
+                                    <p>Nhận sách mới về đọc</p>
+                                    <button className="mode-btn borrow">Chọn Mượn</button>
+                                </div>
+                                <div className="mode-card return" onClick={() => setTransactionMode('return')}>
+                                    <div className="mode-icon">🔄</div>
+                                    <h3>TRẢ SÁCH</h3>
+                                    <p>Hoàn trả sách đã mượn</p>
+                                    <button className="mode-btn return">Chọn Trả</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
                 {/* Left Side: Active Borrowings */}
-                <aside className="active-borrowings-panel">
+                <aside className={`active-borrowings-panel ${!transactionMode ? 'blurred' : ''}`}>
                     <h3>📚 Sách đang mượn</h3>
                     {!borrowingInfo ? (
                         <div className="loading-small">Đang tải...</div>
@@ -374,11 +409,16 @@ export default function BookReturnScreen() {
                 </aside>
 
                 {/* Right Side: Main Actions */}
-                <div className="book-main-actions">
-                    {!transactionResult ? (
+                <div className={`book-main-actions ${!transactionMode ? 'blurred' : ''}`}>
+                    {transactionMode && !transactionResult ? (
                         <>
+                            <div className={`mode-indicator-bar ${transactionMode}`}>
+                                <span>Đang ở chế độ: <strong>{transactionMode === 'borrow' ? 'MƯỢN SÁCH' : 'TRẢ SÁCH'}</strong></span>
+                                <button className="change-mode-link" onClick={handleChangeMode}>Thay đổi</button>
+                            </div>
+
                             {/* Camera for book detection */}
-                            <div className={`book-camera ${detectionStatus}`}>
+                            <div className={`book-camera ${detectionStatus} ${transactionMode}`}>
                                 <video ref={videoRef} autoPlay playsInline muted />
                                 <canvas ref={canvasRef} style={{ display: 'none' }} />
 
@@ -415,21 +455,21 @@ export default function BookReturnScreen() {
                                     </div>
 
                                     <div className="action-buttons">
-                                        {detectedBook.status === 'AVAILABLE' ? (
+                                        {transactionMode === 'borrow' ? (
                                             <button
                                                 className="btn btn-success btn-large"
                                                 onClick={handleBorrow}
-                                                disabled={isProcessing}
+                                                disabled={isProcessing || detectedBook.status !== 'AVAILABLE'}
                                             >
-                                                {isProcessing ? 'Đang xử lý...' : '📥 Mượn sách'}
+                                                {isProcessing ? 'Đang xử lý...' : detectedBook.status === 'AVAILABLE' ? '📥 Xác nhận Mượn' : '⚠️ Sách này hiện không khả dụng để mượn'}
                                             </button>
                                         ) : (
                                             <button
                                                 className="btn btn-primary btn-large"
                                                 onClick={handleReturn}
-                                                disabled={isProcessing}
+                                                disabled={isProcessing || detectedBook.status === 'AVAILABLE'}
                                             >
-                                                {isProcessing ? 'Đang xử lý...' : '📤 Trả sách'}
+                                                {isProcessing ? 'Đang xử lý...' : detectedBook.status !== 'AVAILABLE' ? '📤 Xác nhận Trả' : '⚠️ Sách này đang ở trạng thái CÓ SẴN (chưa mượn)'}
                                             </button>
                                         )}
                                         <button className="btn btn-secondary" onClick={handleReset}>

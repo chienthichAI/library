@@ -18,6 +18,21 @@ class RAGService:
     Retrieval service using pgvector for semantic similarity search.
     """
 
+    @staticmethod
+    def _normalize_vec_dim(vec: List[float], target_dim: int) -> List[float]:
+        """
+        Ensure vector matches pgvector column dimension.
+        - If vec is longer: truncate
+        - If vec is shorter: pad zeros
+        """
+        if not vec:
+            return [0.0] * target_dim
+        if len(vec) == target_dim:
+            return vec
+        if len(vec) > target_dim:
+            return vec[:target_dim]
+        return vec + [0.0] * (target_dim - len(vec))
+
     async def search_books_semantic(
         self,
         db: AsyncSession,
@@ -25,6 +40,8 @@ class RAGService:
         top_k: int = 5,
     ) -> List[Dict[str, Any]]:
         try:
+            # Ensure 1024 dimensions for pgvector
+            query_embedding = self._normalize_vec_dim(query_embedding, 1024)
             sql = text("""
                 SELECT 
                     b.book_id, b.title, b.author, b.subject_category, 
@@ -81,6 +98,8 @@ class RAGService:
         """
         try:
             # 1. Input Preparation
+            # Ensure 1024 dimensions for pgvector
+            query_embedding = self._normalize_vec_dim(query_embedding, 1024)
             vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
             
             # Use entities from AI/LLM instead of hardcoded rules
@@ -235,6 +254,8 @@ class RAGService:
         top_k: int = 3,
     ) -> List[Dict[str, Any]]:
         try:
+            # policy_chunks.embedding is Vector(1024)
+            query_embedding = self._normalize_vec_dim(query_embedding, 1024)
             sql = text("""
                 SELECT 
                     id, chunk_text, section_title, chunk_index,
@@ -265,36 +286,41 @@ class RAGService:
 
     def format_books_for_context(self, books: List[Dict[str, Any]]) -> str:
         if not books:
-            return "Không tìm thấy sách phù hợp trong hệ thống."
+            return "[SYSTEM_STATUS: NO_BOOKS_FOUND] Rất tiếc, mình hiện chưa tìm thấy sách nào phù hợp trong hệ thống."
 
-        lines = ["| STT | Tên sách | Tác giả | Thể loại | Mô tả | Trạng thái | Chi tiết mượn |\n|:---:|:---|:---|:---|:---|:---|:---|"]
-        for i, b in enumerate(books, 1):
+        # Group by title + author to avoid repetitive list
+        unique_books = {}
+        for b in books:
+            key = (b["title"].strip(), b["author"].strip())
+            if key not in unique_books:
+                unique_books[key] = b
+                unique_books[key]["count"] = 1
+            else:
+                unique_books[key]["count"] += 1
+
+        lines = ["| 📚 Tên Sách | ✍️ Tác giả | 📌 Trạng thái |\n|:---|:---|:---|"]
+        
+        for (title, author), b in unique_books.items():
             status_map = {
-                "AVAILABLE": "✅ Sẵn sàng",
-                "BORROWED": "❌ Đã mượn",
-                "RESERVED": "🔒 Giữ chỗ",
-                "DAMAGED": "⚠️ Sửa chữa",
-                "LOST": "🚫 Mất",
+                "AVAILABLE": "✅ Còn sách",
+                "BORROWED": "❌ Hết sách",
+                "RESERVED": "🔒 Đã đặt",
             }
-            status_str = status_map.get(str(b["status"]), b["status"])
+            status_str = status_map.get(str(b["status"]), "⚠️ Kiểm tra lại")
             
-            borrow_info = "-"
-            if b["status"] == "BORROWED" and b["due_date"]:
-                borrow_info = f"Hạn trả: {b['due_date']}"
-                if b["days_overdue"] > 0:
-                    borrow_info += f" (🚨 Quá hạn {b['days_overdue']} ngày)"
-            
-            # Shorten description for context
-            desc = b["description"] or "Không có mô tả"
-            if len(desc) > 120:
-                desc = desc[:117] + "..."
-            
-            category = b["category"] or "Chưa phân loại"
+            # If there are multiple copies, mention it subtly
+            display_title = f"**{title}**"
+            if b["count"] > 1:
+                display_title += f" _({b['count']} bản)_"
+
+            author_str = author if author and author != "Không rõ" else "Đang cập nhật"
             
             lines.append(
-                f"| {i} | **{b['title']}** | {b['author']} | {category} | {desc} | {status_str} | {borrow_info} |"
+                f"| {display_title} | {author_str} | {status_str} |"
             )
-        return "\n".join(lines)
+        
+        footer = "\n\n> [!TIP]\n> Bạn có thể đọc mã vạch sau sách để xem chi tiết hoặc mượn ngay tại Kiosk này nhé! 🚀"
+        return "\n".join(lines) + footer
 
     def format_policy_for_context(self, chunks: List[Dict[str, Any]]) -> str:
         if not chunks:
